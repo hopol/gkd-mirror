@@ -52,7 +52,7 @@ jobs:
         if: steps.check.outputs.changed == 'true'
         run: |
           UPSTREAM_HASH=${{ steps.check.outputs.upstream_hash }}
-          VERSION=$(grep -m1 'versionName' upstream/app/build.gradle.kts | sed 's/.*versionName = "//;s/".*//' || echo "unknown")
+          VERSION=$(grep -m1 'versionName =' upstream/app/build.gradle.kts | sed 's/.*versionName = "//;s/".*//' || echo "unknown")
           cat > upstream/.sync-info << EOF
           commit=$UPSTREAM_HASH
           timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

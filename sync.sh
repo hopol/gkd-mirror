@@ -49,7 +49,7 @@ rm -rf upstream
 mkdir -p upstream
 git archive "upstream/$UPSTREAM_BRANCH" | tar -x -C upstream/
 
-VERSION=$(grep -m1 'versionName' upstream/app/build.gradle.kts | sed 's/.*versionName = "//;s/".*//' 2>/dev/null || echo "unknown")
+VERSION=$(grep -m1 'versionName =' upstream/app/build.gradle.kts | sed 's/.*versionName = "//;s/".*//' 2>/dev/null || echo "unknown")
 log_info "上游版本：$VERSION"
 
 cat > "$SYNC_INFO_FILE" << EOF
