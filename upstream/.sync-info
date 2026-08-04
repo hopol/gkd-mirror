@@ -1,4 +1,4 @@
 commit=342a2e2abf1ee69e46eedfefeba6a786263f0902
-timestamp=2026-08-04T07:51:23Z
+timestamp=2026-08-04T07:56:04Z
 upstream_url=https://github.com/gkd-kit/gkd
-version=    val versionNameSuffix get() = if (tagName == null) (
+version=1.12.1
