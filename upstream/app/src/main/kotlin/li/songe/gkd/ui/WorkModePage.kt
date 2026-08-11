@@ -36,7 +36,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation3.runtime.NavKey
 import kotlinx.serialization.Serializable
 import li.songe.gkd.META
-import li.songe.gkd.permission.writeSecureSettingsState
+import li.songe.gkd.permission.PermissionStates
 import li.songe.gkd.priv.privilegeContextFlow
 import li.songe.gkd.service.A11yService
 import li.songe.gkd.ui.component.AnimatedBooleanContent
@@ -56,13 +56,13 @@ import li.songe.gkd.util.throttle
 import li.songe.gkd.util.toast
 
 @Serializable
-data object AuthA11yRoute : NavKey
+data object WorkModeRoute : NavKey
 
 @Composable
-fun AuthA11yPage() {
+fun WorkModePage() {
     val mainVm = LocalMainViewModel.current
-    viewModel<AuthA11yVm>()
-    val writeSecureSettings by writeSecureSettingsState.stateFlow.collectAsState()
+    viewModel<WorkModeVm>()
+    val writeSecureSettings by PermissionStates.writeSecureSettings.stateFlow.collectAsState()
     val a11yRunning by A11yService.isRunning.collectAsState()
     val privilegeContext by privilegeContextFlow.collectAsState()
     val automatorMode by mainVm.automatorModeFlow.collectAsState()
@@ -203,7 +203,7 @@ fun AuthA11yPage() {
                         .padding(horizontal = cardHorizontalPadding),
                     onClick = throttle {
                         if (!writeSecureSettings) {
-                            toast("请先授予「${writeSecureSettingsState.name}」")
+                            toast("请先授予「${PermissionStates.writeSecureSettings.name}」")
                         }
                         mainVm.dialogFlow.updateDialogOptions(
                             title = "无感保活",
@@ -225,7 +225,7 @@ fun AuthA11yPage() {
                     .fillMaxWidth(),
                 onClick = throttle {
                     if (privilegeContext == null) {
-                        mainVm.navigatePage(PrivilegePageRoute)
+                        mainVm.navigatePage(PrivilegeServiceRoute)
                         return@throttle
                     }
                     mainVm.updateAutomatorMode(AutomatorModeOption.AutomationMode)
@@ -304,7 +304,7 @@ private fun PrivilegeAuthButton(
     TextButton(
         modifier = modifier,
         onClick = throttle {
-            mainVm.navigatePage(PrivilegePageRoute)
+            mainVm.navigatePage(PrivilegeServiceRoute)
         },
     ) {
         Text(

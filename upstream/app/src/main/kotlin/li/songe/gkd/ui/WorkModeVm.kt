@@ -6,14 +6,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import li.songe.gkd.permission.foregroundServiceSpecialUseState
+import li.songe.gkd.permission.PermissionStates
+import kotlin.time.Duration.Companion.milliseconds
 
-class AppOpsAllowVm : ViewModel() {
+class WorkModeVm : ViewModel() {
     init {
         viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
-                foregroundServiceSpecialUseState.updateAndGet()
-                delay(1000)
+                PermissionStates.refreshAll()
+                delay(1000.milliseconds)
             }
         }
     }

@@ -13,13 +13,11 @@ import li.songe.gkd.META
 import li.songe.gkd.MainActivity
 import li.songe.gkd.a11y.useA11yServiceEnabledFlow
 import li.songe.gkd.app
-import li.songe.gkd.notif.abNotif
-import li.songe.gkd.permission.appOpsRestrictedFlow
-import li.songe.gkd.permission.foregroundServiceSpecialUseState
-import li.songe.gkd.permission.notificationState
-import li.songe.gkd.permission.privilegeGrantedState
-import li.songe.gkd.permission.requiredPermission
-import li.songe.gkd.permission.writeSecureSettingsState
+import li.songe.gkd.notif.NotificationCatalog
+import li.songe.gkd.permission.PermissionStates
+import li.songe.gkd.permission.ensurePermission
+import li.songe.gkd.priv.PrivilegeServiceStatus
+import li.songe.gkd.priv.privilegeServiceStatusFlow
 import li.songe.gkd.priv.uiAutomationFlow
 import li.songe.gkd.store.actionCountFlow
 import li.songe.gkd.store.storeFlow
@@ -31,19 +29,12 @@ import li.songe.gkd.util.getSubsStatus
 import li.songe.gkd.util.ruleSummaryFlow
 import li.songe.gkd.util.startForegroundServiceByClass
 import li.songe.gkd.util.stopServiceByClass
+import kotlin.time.Duration.Companion.milliseconds
 
 class StatusService : Service(), OnSimpleLife by DefaultSimpleLifeImpl() {
     override fun onBind(intent: Intent?) = null
     override fun onCreate() = onCreated()
     override fun onDestroy() = onDestroyed()
-
-    val privilegeWarnFlow = combine(
-        privilegeGrantedState.stateFlow,
-        storeFlow,
-    ) { granted, store ->
-        !granted && store.enableAutomator &&
-                (store.useAutomation || store.enableBlockA11yAppList)
-    }.stateIn(scope, SharingStarted.Eagerly, false)
 
     val a11yServiceEnabledFlow = useA11yServiceEnabledFlow()
 
@@ -53,21 +44,21 @@ class StatusService : Service(), OnSimpleLife by DefaultSimpleLifeImpl() {
         val store = storeFlow.value
         val ruleSummary = ruleSummaryFlow.value
         val count = actionCountFlow.value
-        val privilegeWarn = privilegeWarnFlow.value
+        val privilegeServiceStatus = privilegeServiceStatusFlow.value
         val title = if (store.useCustomNotifText) {
             store.customNotifTitle.replaceTemplate(ruleSummary, count)
         } else {
             META.appName
         }
-        return if (appOpsRestrictedFlow.value) {
-            Triple(title, "权限受限，请解除限制", "gkd://page/3")
-        } else if (privilegeWarn) {
-            Triple(title, "特权服务未连接，请完成授权", "gkd://page/4")
+        return if (PermissionStates.appOpsRestrictedFlow.value) {
+            Triple(title, "权限受限，请重新授权", "gkd://page/3")
+        } else if (privilegeServiceStatus == PrivilegeServiceStatus.DisconnectedDesired) {
+            Triple(title, "特权服务连接已中断，请检查", "gkd://page/4")
         } else if (!automationRunning && !abRunning) {
             if (currentAppUseA11y) {
                 val text = if (a11yServiceEnabledFlow.value) {
                     "无障碍发生故障"
-                } else if (writeSecureSettingsState.updateAndGet()) {
+                } else if (PermissionStates.writeSecureSettings.updateAndGet()) {
                     if (store.enableAutomator && store.enableBlockA11yAppList && a11yPartDisabledFlow.value) {
                         val name =
                             appInfoMapFlow.value[topAppIdFlow.value]?.name ?: topAppIdFlow.value
@@ -78,7 +69,7 @@ class StatusService : Service(), OnSimpleLife by DefaultSimpleLifeImpl() {
                 } else {
                     "无障碍未授权"
                 }
-                Triple(title, text, abNotif.uri)
+                Triple(title, text, defaultStatusNotification.uri)
             } else {
                 val text =
                     if (store.enableAutomator && store.enableBlockA11yAppList && a11yPartDisabledFlow.value) {
@@ -88,7 +79,7 @@ class StatusService : Service(), OnSimpleLife by DefaultSimpleLifeImpl() {
                     } else {
                         "自动化已关闭"
                     }
-                Triple(title, text, abNotif.uri)
+                Triple(title, text, defaultStatusNotification.uri)
             }
         } else if (!store.enableMatch) {
             Triple(title, "暂停规则匹配", "gkd://page?tab=1")
@@ -96,10 +87,10 @@ class StatusService : Service(), OnSimpleLife by DefaultSimpleLifeImpl() {
             Triple(
                 title,
                 store.customNotifText.replaceTemplate(ruleSummary, count),
-                abNotif.uri
+                defaultStatusNotification.uri
             )
         } else {
-            Triple(title, getSubsStatus(ruleSummary, count), abNotif.uri)
+            Triple(title, getSubsStatus(ruleSummary, count), defaultStatusNotification.uri)
         }
     }
 
@@ -110,33 +101,37 @@ class StatusService : Service(), OnSimpleLife by DefaultSimpleLifeImpl() {
             delayMillis = if (app.justStarted) 1000 else 0,
         )
         onCreated {
-            abNotif.notifyService()
+            if (!defaultStatusNotification.startForeground()) return@onCreated
             scope.launch {
                 combine(
                     A11yService.isRunning,
                     uiAutomationFlow,
                     storeFlow,
                     ruleSummaryFlow,
-                    privilegeWarnFlow,
+                    privilegeServiceStatusFlow,
                     a11yServiceEnabledFlow,
-                    writeSecureSettingsState.stateFlow,
-                    appOpsRestrictedFlow,
+                    PermissionStates.writeSecureSettings.stateFlow,
+                    PermissionStates.appOpsRestrictedFlow,
                     topAppIdFlow,
-                    actionCountFlow.debounce(1000L),
+                    actionCountFlow.debounce(1000L.milliseconds),
                 ) {
                     statusTriple()
                 }
                     .stateIn(
                         scope,
                         SharingStarted.Eagerly,
-                        Triple(abNotif.title, abNotif.text, abNotif.uri)
+                        Triple(
+                            defaultStatusNotification.title,
+                            defaultStatusNotification.text,
+                            defaultStatusNotification.uri,
+                        )
                     )
                     .collect {
-                        abNotif.copy(
+                        NotificationCatalog.status(
                             title = it.first,
                             text = it.second,
                             uri = it.third,
-                        ).notifyService()
+                        ).startForeground()
                     }
             }
         }
@@ -147,14 +142,21 @@ class StatusService : Service(), OnSimpleLife by DefaultSimpleLifeImpl() {
         val needRestart
             get() = storeFlow.value.enableStatusService
                     && !isRunning.value
-                    && notificationState.updateAndGet()
-                    && foregroundServiceSpecialUseState.updateAndGet()
+                    && PermissionStates.notification.updateAndGet()
+                    && PermissionStates.foregroundServiceSpecialUse.updateAndGet()
 
         fun start() = startForegroundServiceByClass(StatusService::class)
         fun stop() = stopServiceByClass(StatusService::class)
         suspend fun requestStart(context: MainActivity) {
-            requiredPermission(context, foregroundServiceSpecialUseState)
-            requiredPermission(context, notificationState)
+            if (
+                !ensurePermission(
+                    context,
+                    PermissionStates.foregroundServiceSpecialUse,
+                    PermissionStates.notification,
+                )
+            ) {
+                return
+            }
             start()
             storeFlow.update { it.copy(enableStatusService = true) }
         }
@@ -171,6 +173,8 @@ class StatusService : Service(), OnSimpleLife by DefaultSimpleLifeImpl() {
         }
     }
 }
+
+private val defaultStatusNotification by lazy { NotificationCatalog.status() }
 
 private fun String.replaceTemplate(ruleSummary: RuleSummary, count: Long): String {
     return replace($$"${i}", ruleSummary.globalGroups.size.toString())

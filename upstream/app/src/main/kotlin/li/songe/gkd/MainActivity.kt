@@ -8,6 +8,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -20,7 +22,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.zIndex
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
@@ -41,8 +46,8 @@ import kotlinx.coroutines.sync.withLock
 import li.songe.gkd.a11y.topActivityFlow
 import li.songe.gkd.a11y.updateSystemDefaultAppId
 import li.songe.gkd.a11y.updateTopActivity
-import li.songe.gkd.permission.AuthDialog
-import li.songe.gkd.permission.updatePermissionState
+import li.songe.gkd.permission.PermissionRequestHost
+import li.songe.gkd.permission.PermissionStates
 import li.songe.gkd.priv.privilegeContextFlow
 import li.songe.gkd.priv.uiAutomationOccupiedFlow
 import li.songe.gkd.service.A11yService
@@ -50,7 +55,7 @@ import li.songe.gkd.service.StatusService
 import li.songe.gkd.service.fixRestartAutomatorService
 import li.songe.gkd.service.updateTopTaskAppId
 import li.songe.gkd.store.storeFlow
-import li.songe.gkd.ui.AuthA11yRoute
+import li.songe.gkd.ui.PrivilegeServiceRoute
 import li.songe.gkd.ui.component.BuildDialog
 import li.songe.gkd.ui.component.ShareLogDlg
 import li.songe.gkd.ui.component.SubsSheet
@@ -64,7 +69,6 @@ import li.songe.gkd.util.BarUtils
 import li.songe.gkd.util.EditGithubCookieDlg
 import li.songe.gkd.util.KeyboardUtils
 import li.songe.gkd.util.LogUtils
-import li.songe.gkd.util.ShortUrlSet
 import li.songe.gkd.util.componentName
 import li.songe.gkd.util.fixSomeProblems
 import li.songe.gkd.util.launchTry
@@ -185,22 +189,28 @@ class MainActivity : ComponentActivity() {
                 LocalMainViewModel provides mainVm
             ) {
                 AppTheme {
-                    MainNavigation(mainVm)
-                    if (!mainVm.termsAcceptedFlow.collectAsState().value) {
-                        TermsAcceptDialog()
-                    } else {
-                        UiAutomationAlreadyRegisteredDlg()
-                        AccessRestrictedSettingsDlg()
-                        AuthDialog(mainVm.authReasonFlow)
-                        BuildDialog(mainVm.dialogFlow)
-                        mainVm.uploadOptions.ShowDialog()
-                        EditGithubCookieDlg()
-                        mainVm.updateStatus?.UpgradeDialog()
-                        SubsSheet(mainVm, mainVm.sheetSubsIdFlow)
-                        mainVm.inputSubsLinkOption.ContentDialog()
-                        mainVm.ruleGroupState.Render()
-                        TextDialog(mainVm.textFlow)
-                        ShareLogDlg(mainVm.showShareLogDlgFlow)
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        MainNavigation(mainVm)
+                        if (!mainVm.termsAcceptedFlow.collectAsState().value) {
+                            TermsAcceptDialog()
+                        } else {
+                            UiAutomationAlreadyRegisteredDlg()
+                            AccessRestrictedSettingsDlg()
+                            BuildDialog(mainVm.dialogFlow)
+                            mainVm.uploadOptions.ShowDialog()
+                            EditGithubCookieDlg()
+                            mainVm.updateStatus?.UpgradeDialog()
+                            SubsSheet(mainVm, mainVm.sheetSubsIdFlow)
+                            mainVm.inputSubsLinkOption.ContentDialog()
+                            mainVm.ruleGroupState.Render()
+                            TextDialog(mainVm.textFlow)
+                            ShareLogDlg(mainVm.showShareLogDlgFlow)
+                        }
+                        PermissionRequestHost(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .zIndex(1f),
+                        )
                     }
                 }
             }
@@ -276,7 +286,7 @@ fun syncFixState() {
         syncStateMutex.withLock {
             updateSystemDefaultAppId()
             privilegeContextFlow.value?.grantSelf()
-            updatePermissionState()
+            PermissionStates.refreshAll()
             fixRestartAutomatorService()
         }
     }
@@ -294,20 +304,20 @@ fun AccessRestrictedSettingsDlg() {
     }
     val accessRestrictedSettingsShow by accessRestrictedSettingsShowFlow.collectAsState()
     val mainVm = LocalMainViewModel.current
-    val isA11yPage = mainVm.topRoute is AuthA11yRoute
-    LaunchedEffect(isA11yPage, accessRestrictedSettingsShow) {
-        if (isA11yPage && accessRestrictedSettingsShow && !a11yRunning) {
+    val isPrivilegeServicePage = mainVm.topRoute is PrivilegeServiceRoute
+    LaunchedEffect(isPrivilegeServicePage, accessRestrictedSettingsShow) {
+        if (isPrivilegeServicePage && accessRestrictedSettingsShow && !a11yRunning) {
             toast("请重新授权以解除限制")
             accessRestrictedSettingsShowFlow.value = false
         }
     }
-    if (accessRestrictedSettingsShow && !isA11yPage && !a11yRunning) {
+    if (accessRestrictedSettingsShow && !isPrivilegeServicePage && !a11yRunning) {
         AlertDialog(
             title = {
                 Text(text = "权限受限")
             },
             text = {
-                Text(text = "当前操作权限「访问受限设置」已被限制, 请先解除限制")
+                Text(text = "当前操作权限「访问受限设置」已被限制，请前往特权服务重新授权")
             },
             onDismissRequest = {
                 accessRestrictedSettingsShowFlow.value = false
@@ -315,9 +325,9 @@ fun AccessRestrictedSettingsDlg() {
             confirmButton = {
                 TextButton({
                     accessRestrictedSettingsShowFlow.value = false
-                    mainVm.navigateWebPage(ShortUrlSet.URL2)
+                    mainVm.navigatePage(PrivilegeServiceRoute)
                 }) {
-                    Text(text = "解除")
+                    Text(text = "前往授权")
                 }
             },
             dismissButton = {

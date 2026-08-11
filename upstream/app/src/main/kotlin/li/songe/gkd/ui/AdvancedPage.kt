@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -52,10 +51,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
 import li.songe.gkd.MainActivity
 import li.songe.gkd.R
-import li.songe.gkd.permission.canDrawOverlaysState
-import li.songe.gkd.permission.foregroundServiceSpecialUseState
-import li.songe.gkd.permission.notificationState
-import li.songe.gkd.permission.requiredPermission
+import li.songe.gkd.permission.PermissionStates
+import li.songe.gkd.permission.ensurePermission
 import li.songe.gkd.service.ActivityService
 import li.songe.gkd.service.ButtonService
 import li.songe.gkd.service.EventService
@@ -278,29 +275,13 @@ fun AdvancedPage() {
                 .verticalScroll(rememberScrollState())
                 .padding(contentPadding),
         ) {
-            Text(
-                text = "特权服务",
-                modifier = Modifier.titleItemPadding(showTop = false),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            SettingItem(
-                title = "特权服务",
-                subtitle = "管理授权与启动方式",
-                imageVector = PerfIcon.ArrowForward,
-                onClickLabel = "打开高级授权页面",
-                onClick = {
-                    mainVm.navigatePage(PrivilegePageRoute)
-                },
-            )
-
             val server by HttpService.httpServerFlow.collectAsState()
             val httpServerRunning = server != null
             val localNetworkIps by HttpService.localNetworkIpsFlow.collectAsState()
 
             Text(
                 text = "HTTP",
-                modifier = Modifier.titleItemPadding(),
+                modifier = Modifier.titleItemPadding(showTop = false),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -321,8 +302,15 @@ fun AdvancedPage() {
                 checked = httpServerRunning,
                 onCheckedChange = throttle(fn = vm.viewModelScope.launchAsFn<Boolean> {
                     if (it) {
-                        requiredPermission(context, foregroundServiceSpecialUseState)
-                        requiredPermission(context, notificationState)
+                        if (
+                            !ensurePermission(
+                                context,
+                                PermissionStates.foregroundServiceSpecialUse,
+                                PermissionStates.notification,
+                            )
+                        ) {
+                            return@launchAsFn
+                        }
                         HttpService.start()
                     } else {
                         HttpService.stop()
@@ -412,7 +400,14 @@ fun AdvancedPage() {
                     checked = screenshotRunning,
                     onCheckedChange = vm.viewModelScope.launchAsFn<Boolean> {
                         if (it) {
-                            requiredPermission(context, notificationState)
+                            if (
+                                !ensurePermission(
+                                    context,
+                                    PermissionStates.notification,
+                                )
+                            ) {
+                                return@launchAsFn
+                            }
                             val mediaProjectionManager =
                                 context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
                             val activityResult =
@@ -433,9 +428,16 @@ fun AdvancedPage() {
                 checked = ButtonService.isRunning.collectAsState().value,
                 onCheckedChange = vm.viewModelScope.launchAsFn<Boolean> {
                     if (it) {
-                        requiredPermission(context, foregroundServiceSpecialUseState)
-                        requiredPermission(context, notificationState)
-                        requiredPermission(context, canDrawOverlaysState)
+                        if (
+                            !ensurePermission(
+                                context,
+                                PermissionStates.foregroundServiceSpecialUse,
+                                PermissionStates.notification,
+                                PermissionStates.drawOverlays,
+                            )
+                        ) {
+                            return@launchAsFn
+                        }
                         ButtonService.start()
                     } else {
                         ButtonService.stop()
@@ -535,9 +537,16 @@ fun AdvancedPage() {
                 checked = ActivityService.isRunning.collectAsState().value,
                 onCheckedChange = vm.viewModelScope.launchAsFn<Boolean> {
                     if (it) {
-                        requiredPermission(context, foregroundServiceSpecialUseState)
-                        requiredPermission(context, notificationState)
-                        requiredPermission(context, canDrawOverlaysState)
+                        if (
+                            !ensurePermission(
+                                context,
+                                PermissionStates.foregroundServiceSpecialUse,
+                                PermissionStates.notification,
+                                PermissionStates.drawOverlays,
+                            )
+                        ) {
+                            return@launchAsFn
+                        }
                         ActivityService.start()
                     } else {
                         ActivityService.stop()
@@ -557,9 +566,16 @@ fun AdvancedPage() {
                 checked = EventService.isRunning.collectAsState().value,
                 onCheckedChange = vm.viewModelScope.launchAsFn<Boolean> {
                     if (it) {
-                        requiredPermission(context, foregroundServiceSpecialUseState)
-                        requiredPermission(context, notificationState)
-                        requiredPermission(context, canDrawOverlaysState)
+                        if (
+                            !ensurePermission(
+                                context,
+                                PermissionStates.foregroundServiceSpecialUse,
+                                PermissionStates.notification,
+                                PermissionStates.drawOverlays,
+                            )
+                        ) {
+                            return@launchAsFn
+                        }
                         EventService.start()
                     } else {
                         EventService.stop()

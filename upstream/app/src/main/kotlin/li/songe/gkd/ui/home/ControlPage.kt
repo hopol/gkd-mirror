@@ -18,6 +18,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,9 +42,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import li.songe.gkd.MainActivity
 import li.songe.gkd.R
 import li.songe.gkd.data.SubsConfig
-import li.songe.gkd.permission.appOpsRestrictedFlow
-import li.songe.gkd.permission.writeSecureSettingsState
+import li.songe.gkd.permission.PermissionStates
+import li.songe.gkd.priv.PrivilegeServiceStatus
 import li.songe.gkd.priv.privilegeContextFlow
+import li.songe.gkd.priv.privilegeServiceStatusFlow
 import li.songe.gkd.priv.uiAutomationFlow
 import li.songe.gkd.service.A11yService
 import li.songe.gkd.service.ActivityService
@@ -55,9 +58,9 @@ import li.songe.gkd.store.storeFlow
 import li.songe.gkd.ui.ActionLogRoute
 import li.songe.gkd.ui.ActivityLogRoute
 import li.songe.gkd.ui.AppConfigRoute
-import li.songe.gkd.ui.AuthA11yRoute
-import li.songe.gkd.ui.PrivilegePageRoute
+import li.songe.gkd.ui.PrivilegeServiceRoute
 import li.songe.gkd.ui.WebViewRoute
+import li.songe.gkd.ui.WorkModeRoute
 import li.songe.gkd.ui.component.GroupNameText
 import li.songe.gkd.ui.component.PerfIcon
 import li.songe.gkd.ui.component.PerfIconButton
@@ -71,7 +74,6 @@ import li.songe.gkd.ui.style.itemHorizontalPadding
 import li.songe.gkd.ui.style.itemVerticalPadding
 import li.songe.gkd.ui.style.surfaceCardColors
 import li.songe.gkd.util.HOME_PAGE_URL
-import li.songe.gkd.util.ShortUrlSet
 import li.songe.gkd.util.latestRecordDescFlow
 import li.songe.gkd.util.latestRecordFlow
 import li.songe.gkd.util.launchAsFn
@@ -82,6 +84,9 @@ fun useControlPage(): ScaffoldExt {
     val context = LocalActivity.current as MainActivity
     val mainVm = LocalMainViewModel.current
     val vm = viewModel<HomeVm>()
+    val privilegeContext by privilegeContextFlow.collectAsState()
+    val privilegeServiceStatus by privilegeServiceStatusFlow.collectAsState()
+    val automatorMode by mainVm.automatorModeFlow.collectAsState()
     val scrollKey = rememberSaveable { mutableIntStateOf(0) }
     val (scrollBehavior, scrollState) = useScrollBehaviorState(scrollKey)
     LaunchedEffect(null) {
@@ -100,12 +105,20 @@ fun useControlPage(): ScaffoldExt {
                     text = stringResource(R.string.app_name)
                 )
             }, actions = {
+                val (contentDescription, contentColor) = when (privilegeServiceStatus) {
+                    PrivilegeServiceStatus.Connected -> "特权服务，已连接" to MaterialTheme.colorScheme.primary
+                    PrivilegeServiceStatus.Disconnected -> "特权服务，未连接" to MaterialTheme.colorScheme.onSurfaceVariant
+                    PrivilegeServiceStatus.DisconnectedDesired -> "特权服务，连接已中断" to MaterialTheme.colorScheme.error
+                }
                 PerfIconButton(
                     imageVector = PerfIcon.RocketLaunch,
-                    onClickLabel = "前往工作模式页面",
-                    contentDescription = "工作模式",
+                    onClickLabel = "前往特权服务页面",
+                    contentDescription = contentDescription,
+                    colors = IconButtonDefaults.iconButtonColors(
+                        contentColor = contentColor,
+                    ),
                     onClick = throttle {
-                        mainVm.navigatePage(AuthA11yRoute)
+                        mainVm.navigatePage(PrivilegeServiceRoute)
                     },
                 )
             })
@@ -114,7 +127,7 @@ fun useControlPage(): ScaffoldExt {
 
         val a11yRunning by A11yService.isRunning.collectAsState()
         val manageRunning by StatusService.isRunning.collectAsState()
-        val writeSecureSettings by writeSecureSettingsState.stateFlow.collectAsState()
+        val writeSecureSettings by PermissionStates.writeSecureSettings.stateFlow.collectAsState()
 
         Column(
             modifier = Modifier
@@ -123,17 +136,17 @@ fun useControlPage(): ScaffoldExt {
                 .padding(horizontal = itemHorizontalPadding),
             verticalArrangement = Arrangement.spacedBy(itemHorizontalPadding / 2)
         ) {
-            if (appOpsRestrictedFlow.collectAsState().value) {
+            if (PermissionStates.appOpsRestrictedFlow.collectAsState().value) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
                         .semantics(mergeDescendants = true) {
-                            this.onClick(label = "前往解除限制页面", action = null)
+                            this.onClick(label = "前往特权服务页面", action = null)
                         },
                     shape = MaterialTheme.shapes.large,
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                     onClick = throttle {
-                        mainVm.navigateWebPage(ShortUrlSet.URL2)
+                        mainVm.navigatePage(PrivilegeServiceRoute)
                     },
                 ) {
                     Row(
@@ -146,7 +159,7 @@ fun useControlPage(): ScaffoldExt {
                         PerfIcon(imageVector = PerfIcon.WarningAmber)
                         Text(
                             modifier = Modifier.weight(1f),
-                            text = "检测到权限受限制，请前往解除",
+                            text = "检测到权限受限，请前往特权服务",
                             style = MaterialTheme.typography.bodyLarge,
                         )
                         PerfIcon(imageVector = PerfIcon.KeyboardArrowRight)
@@ -154,9 +167,7 @@ fun useControlPage(): ScaffoldExt {
                 }
             }
             if (store.useA11y || actualA11yScopeAppList.contains(topAppIdFlow.collectAsState().value)) {
-                PageSwitchItemCard(
-                    imageVector = PerfIcon.Memory,
-                    title = "服务状态",
+                ServiceStatusCard(
                     subtitle = if (a11yRunning) {
                         "无障碍正在运行"
                     } else if (mainVm.a11yServiceEnabledFlow.collectAsState().value) {
@@ -172,19 +183,20 @@ fun useControlPage(): ScaffoldExt {
                     },
                     checked = a11yRunning,
                     onCheckedChange = { newEnabled ->
-                        if (newEnabled && !writeSecureSettingsState.value) {
-                            mainVm.navigatePage(AuthA11yRoute)
+                        if (newEnabled && !PermissionStates.writeSecureSettings.value) {
+                            mainVm.navigatePage(WorkModeRoute)
                         } else {
                             switchAutomatorService()
                         }
                     },
+                    mode = automatorMode.label,
+                    onModeClick = {
+                        mainVm.navigatePage(WorkModeRoute)
+                    },
                 )
             } else {
                 val automation by uiAutomationFlow.collectAsState()
-                val privilegeContext by privilegeContextFlow.collectAsState()
-                PageSwitchItemCard(
-                    imageVector = PerfIcon.Memory,
-                    title = "服务状态",
+                ServiceStatusCard(
                     subtitle = if (automation != null) {
                         "自动化正在运行"
                     } else if (privilegeContext == null) {
@@ -199,10 +211,14 @@ fun useControlPage(): ScaffoldExt {
                     checked = automation != null,
                     onCheckedChange = { newEnabled ->
                         if (newEnabled && privilegeContext == null) {
-                            mainVm.navigatePage(PrivilegePageRoute)
+                            mainVm.navigatePage(PrivilegeServiceRoute)
                         } else {
                             switchAutomatorService()
                         }
+                    },
+                    mode = automatorMode.label,
+                    onModeClick = {
+                        mainVm.navigatePage(WorkModeRoute)
                     },
                 )
             }
@@ -224,16 +240,7 @@ fun useControlPage(): ScaffoldExt {
                 },
             )
 
-            ServerStatusCard()
-
-            PageItemCard(
-                title = "触发记录",
-                subtitle = "规则误触可定位关闭",
-                imageVector = PerfIcon.History,
-                onClickLabel = "打开触发记录页面",
-                onClick = {
-                    mainVm.navigatePage(ActionLogRoute())
-                })
+            TriggerOverviewCard()
 
             if (ActivityService.isRunning.collectAsState().value) {
                 PageItemCard(
@@ -343,11 +350,107 @@ private fun PageSwitchItemCard(
 }
 
 @Composable
+private fun ServiceStatusCard(
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    mode: String,
+    onModeClick: () -> Unit,
+) {
+    val onStatusClick = throttle { onCheckedChange(!checked) }
+    val onModeRowClick = throttle(onModeClick)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = surfaceCardColors,
+    ) {
+        IconTextCard(
+            imageVector = PerfIcon.Memory,
+            modifier = Modifier
+                .semantics(mergeDescendants = true) {}
+                .clickable(
+                    onClickLabel = "切换服务状态",
+                    onClick = onStatusClick,
+                ),
+        ) {
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = "服务状态",
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            PerfSwitch(
+                checked = checked,
+                onCheckedChange = null,
+            )
+        }
+        HorizontalDivider(
+            modifier = Modifier.padding(
+                start = itemVerticalPadding + 40.dp + itemHorizontalPadding,
+                end = itemVerticalPadding,
+            ),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics(mergeDescendants = true) {}
+                .clickable(
+                    onClickLabel = "前往工作模式页面",
+                    onClick = onModeRowClick,
+                )
+                .padding(
+                    start = itemVerticalPadding,
+                    end = itemVerticalPadding,
+                    top = 10.dp,
+                    bottom = 10.dp,
+                ),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PerfIcon(
+                imageVector = PerfIcon.AutoMode,
+                modifier = Modifier
+                    .padding(horizontal = 10.dp)
+                    .size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                contentDescription = null,
+            )
+            Spacer(modifier = Modifier.width(itemHorizontalPadding))
+            Text(
+                text = "工作模式",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Text(
+                text = mode,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            PerfIcon(
+                imageVector = PerfIcon.KeyboardArrowRight,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                contentDescription = null,
+            )
+        }
+    }
+}
+
+@Composable
 private fun IconTextCard(
-    imageVector: ImageVector, content: @Composable () -> Unit
+    imageVector: ImageVector,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(itemVerticalPadding),
         verticalAlignment = Alignment.CenterVertically
@@ -368,18 +471,25 @@ private fun IconTextCard(
 }
 
 @Composable
-private fun ServerStatusCard() {
+private fun TriggerOverviewCard() {
     val mainVm = LocalMainViewModel.current
     val vm = viewModel<HomeVm>()
+    val openActionLog = throttle {
+        mainVm.navigatePage(ActionLogRoute())
+    }
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .semantics {
-                onClick(label = "不执行操作", action = null)
-            }, shape = RoundedCornerShape(20.dp), colors = surfaceCardColors, onClick = {}) {
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = surfaceCardColors,
+    ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .semantics(mergeDescendants = true) {}
+                .clickable(
+                    onClickLabel = "打开触发记录页面",
+                    onClick = openActionLog,
+                )
                 .padding(
                     start = itemVerticalPadding,
                     end = itemVerticalPadding,
@@ -401,18 +511,20 @@ private fun ServerStatusCard() {
                 modifier = Modifier.weight(1f)
             ) {
                 Text(
-                    text = "数据概览",
+                    text = "触发记录",
                     style = MaterialTheme.typography.bodyLarge,
                 )
-                val usedSubsItemCount by vm.usedSubsItemCountFlow.collectAsState()
-                AnimatedVisibility(usedSubsItemCount > 0) {
-                    Text(
-                        text = "已开启 $usedSubsItemCount 条订阅",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
+                Text(
+                    text = "规则误触可定位关闭",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
+            PerfIcon(
+                imageVector = PerfIcon.KeyboardArrowRight,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                contentDescription = null,
+            )
         }
         Column(
             modifier = Modifier

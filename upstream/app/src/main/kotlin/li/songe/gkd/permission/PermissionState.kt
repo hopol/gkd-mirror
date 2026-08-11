@@ -1,26 +1,23 @@
 package li.songe.gkd.permission
 
 import android.Manifest
-import android.app.Activity
 import android.app.AppOpsManager
 import android.app.AppOpsManagerHidden
 import android.provider.Settings
 import com.hjq.permissions.XXPermissions
 import com.hjq.permissions.permission.PermissionLists
 import com.hjq.permissions.permission.base.IPermission
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.updateAndGet
-import li.songe.gkd.MainActivity
 import li.songe.gkd.MainViewModel
 import li.songe.gkd.app
 import li.songe.gkd.appScope
 import li.songe.gkd.priv.CompatAppOpsService
 import li.songe.gkd.priv.privilegeContextFlow
-import li.songe.gkd.ui.AppOpsAllowRoute
+import li.songe.gkd.ui.PrivilegeServiceRoute
 import li.songe.gkd.util.AndroidTarget
 import li.songe.gkd.util.toast
 import li.songe.gkd.util.updateAllAppInfo
@@ -29,12 +26,11 @@ import priv.kit.core.Privilege
 
 class PermissionState(
     val name: String,
-    val check: () -> Boolean,
-    val request: (suspend (context: MainActivity) -> PermissionResult)? = null,
-    /**
-     * show it when user doNotAskAgain
-     */
-    val reason: AuthReason? = null,
+    private val check: () -> Boolean,
+    val permission: IPermission? = null,
+    val purpose: String? = null,
+    val resolution: PermissionResolution? = null,
+    private val onChanged: (() -> Unit)? = null,
 ) {
     val stateFlow = MutableStateFlow(false)
     val value get() = stateFlow.value
@@ -43,46 +39,46 @@ class PermissionState(
         return stateFlow.updateAndGet { check() }
     }
 
-    fun updateChanged(): Boolean {
-        return value != updateAndGet()
+    fun refresh(): Boolean {
+        val oldValue = value
+        val newValue = updateAndGet()
+        if (oldValue != newValue) {
+            onChanged?.invoke()
+        }
+        return newValue
     }
 
-    fun checkOrToast(): Boolean = if (!updateAndGet()) {
-        val r = updateAndGet()
-        if (!r) {
-            reason?.text?.let { toast(it()) }
+    fun checkOrToast(): Boolean {
+        val granted = refresh()
+        if (!granted) {
+            toast("请先授予「$name」")
         }
-        r
-    } else {
-        true
+        return granted
     }
 }
 
-private suspend fun asyncRequestPermission(
-    context: Activity,
+data class PermissionResolution(
+    val message: String,
+    val confirmText: String = "去设置",
+    val confirm: (() -> Unit)? = null,
+)
+
+private fun requestablePermissionState(
+    name: String,
+    purpose: String,
     permission: IPermission,
-): PermissionResult {
-    if (XXPermissions.isGrantedPermission(context, permission)) {
-        return PermissionResult.Granted
-    }
-    val deferred = CompletableDeferred<PermissionResult>()
-    XXPermissions.with(context)
-        .unchecked()
-        .permission(permission)
-        .request { grantedList, _ ->
-            if (grantedList.contains(permission)) {
-                PermissionResult.Granted
-            } else {
-                PermissionResult.Denied(
-                    XXPermissions.isDoNotAskAgainPermissions(
-                        context,
-                        arrayOf(permission)
-                    )
-                )
-            }.let { deferred.complete(it) }
-        }
-    return deferred.await()
-}
+    check: () -> Boolean = { XXPermissions.isGrantedPermission(app, permission) },
+    onChanged: (() -> Unit)? = null,
+) = PermissionState(
+    name = name,
+    check = check,
+    permission = permission,
+    purpose = purpose,
+    resolution = PermissionResolution(
+        message = "未授予「$name」\n请前往系统权限设置开启",
+    ),
+    onChanged = onChanged,
+)
 
 private fun checkAllowedOp(op: String): Boolean = app.appOpsManager.checkOpNoThrow(
     op,
@@ -92,258 +88,176 @@ private fun checkAllowedOp(op: String): Boolean = app.appOpsManager.checkOpNoThr
     it != AppOpsManager.MODE_IGNORED && it != AppOpsManager.MODE_ERRORED
 }
 
-// https://github.com/gkd-kit/gkd/issues/954
-// https://github.com/gkd-kit/gkd/issues/887
-val foregroundServiceSpecialUseState by lazy {
-    PermissionState(
-        name = "特殊用途的前台服务",
-        check = {
-            if (AndroidTarget.UPSIDE_DOWN_CAKE) {
-                checkAllowedOp(AppOpsManagerHidden.OPSTR_FOREGROUND_SERVICE_SPECIAL_USE)
-            } else {
-                true
-            }
-        },
-        reason = AuthReason(
-            text = { "当前操作权限「特殊用途的前台服务」已被限制, 请先解除限制" },
-            confirm = {
-                MainViewModel.instance.navigatePage(AppOpsAllowRoute)
-            },
-        ),
-    )
-}
 
-// https://github.com/orgs/gkd-kit/discussions/1234
-val accessA11yState by lazy {
-    PermissionState(
-        name = "访问无障碍",
-        check = {
-            if (AndroidTarget.Q) {
-                checkAllowedOp(AppOpsManagerHidden.OPSTR_ACCESS_ACCESSIBILITY)
-            } else {
-                true
-            }
-        },
-    )
-}
-
-val createA11yOverlayState by lazy {
-    PermissionState(
-        name = "创建无障碍悬浮窗",
-        check = {
-            if (CompatAppOpsService.supportA11yOverlay) {
-                checkAllowedOp(AppOpsManagerHidden.OPSTR_CREATE_ACCESSIBILITY_OVERLAY)
-            } else {
-                true
-            }
-        },
-    )
-}
-
-const val Manifest_permission_GET_APP_OPS_STATS = "android.permission.GET_APP_OPS_STATS"
-
-val getAppOpsStatsState by lazy {
-    PermissionState(
-        name = "获取应用权限状态",
-        check = {
-            app.checkGrantedPermission(Manifest_permission_GET_APP_OPS_STATS)
-        },
-    )
-}
-
-private var canRestrictsRead = true
-val accessRestrictedSettingsState by lazy {
-    PermissionState(
-        name = "访问受限设置",
-        check = {
-            if (canRestrictsRead && AndroidTarget.UPSIDE_DOWN_CAKE && getAppOpsStatsState.updateAndGet()) {
-                try {
-                    // https://cs.android.com/android/platform/superproject/+/android-14.0.0_r55:frameworks/base/services/core/java/com/android/server/appop/AppOpsService.java;l=4237
-                    checkAllowedOp(AppOpsManagerHidden.OPSTR_ACCESS_RESTRICTED_SETTINGS)
-                } catch (_: SecurityException) {
-                    // https://cs.android.com/android/platform/superproject/+/android-14.0.0_r54:frameworks/base/services/core/java/com/android/server/appop/AppOpsService.java;l=4227
-                    canRestrictsRead = false
+object PermissionStates {
+    // https://github.com/gkd-kit/gkd/issues/954
+    // https://github.com/gkd-kit/gkd/issues/887
+    val foregroundServiceSpecialUse by lazy {
+        PermissionState(
+            name = "特殊用途的前台服务",
+            check = {
+                if (AndroidTarget.UPSIDE_DOWN_CAKE) {
+                    checkAllowedOp(AppOpsManagerHidden.OPSTR_FOREGROUND_SERVICE_SPECIAL_USE)
+                } else {
                     true
                 }
-            } else {
-                true
-            }
-        },
-    )
-}
-
-val appOpsRestrictStateList by lazy {
-    arrayOf(
-        accessA11yState,
-        createA11yOverlayState,
-        accessRestrictedSettingsState,
-        foregroundServiceSpecialUseState,
-    )
-}
-
-val appOpsRestrictedFlow by lazy {
-    combine(
-        *appOpsRestrictStateList.map { it.stateFlow }.toTypedArray(),
-    ) { list ->
-        list.any { !it }
-    }.stateIn(appScope, SharingStarted.Eagerly, false)
-}
-
-val notificationState by lazy {
-    val permission = PermissionLists.getNotificationServicePermission()
-    PermissionState(
-        name = "通知权限",
-        check = {
-            XXPermissions.isGrantedPermission(app, permission)
-        },
-        request = { asyncRequestPermission(it, permission) },
-        reason = AuthReason(
-            text = { "当前操作需要「通知权限」\n请先前往权限页面授权" },
-            confirm = {
-                XXPermissions.startPermissionActivity(app, permission)
-            }
-        ),
-    )
-}
-
-val canQueryPkgState by lazy {
-    val permission = PermissionLists.getGetInstalledAppsPermission()
-    val supported by lazy { permission.isSupportRequestPermission(app) }
-    PermissionState(
-        name = "读取应用列表权限",
-        check = {
-            if (supported) {
-                // 此框架内部有两个 printStackTrace 导致每次检测都会打印日志污染控制台
-                XXPermissions.isGrantedPermission(app, permission)
-            } else {
-                true
-            }
-        },
-        request = {
-            asyncRequestPermission(it, permission)
-        },
-        reason = AuthReason(
-            text = { "当前操作需要「读取应用列表权限」\n请先前往权限页面授权" },
-            confirm = {
-                XXPermissions.startPermissionActivity(app, permission)
-            }
-        ),
-    )
-}
-
-val canDrawOverlaysState by lazy {
-    PermissionState(
-        name = "悬浮窗权限",
-        check = {
-            // https://developer.android.com/security/fraud-prevention/activities?hl=zh-cn#hide_overlay_windows
-            Settings.canDrawOverlays(app)
-        },
-        reason = AuthReason(
-            text = {
-                "当前操作需要「悬浮窗权限」\n请先前往权限页面授权"
             },
-            confirm = {
-                XXPermissions.startPermissionActivity(
-                    app,
-                    PermissionLists.getSystemAlertWindowPermission()
-                )
-            }
-        ),
-    )
-}
+            resolution = PermissionResolution(
+                message = "「特殊用途的前台服务」已被限制，请前往特权服务重新授权",
+                confirmText = "去授权",
+                confirm = {
+                    MainViewModel.instance.navigatePage(PrivilegeServiceRoute)
+                },
+            ),
+        )
+    }
 
-val canWriteExternalStorage by lazy {
-    PermissionState(
-        name = "写入外部存储权限",
-        check = {
-            if (AndroidTarget.Q) {
+    // https://github.com/orgs/gkd-kit/discussions/1234
+    private fun checkAccessA11y(): Boolean {
+        return !AndroidTarget.Q ||
+                checkAllowedOp(AppOpsManagerHidden.OPSTR_ACCESS_ACCESSIBILITY)
+    }
+
+    private fun checkCreateA11yOverlay(): Boolean {
+        return !CompatAppOpsService.supportA11yOverlay ||
+                checkAllowedOp(AppOpsManagerHidden.OPSTR_CREATE_ACCESSIBILITY_OVERLAY)
+    }
+
+    val Manifest_permission_GET_APP_OPS_STATS get() = "android.permission.GET_APP_OPS_STATS"
+
+    private var canRestrictsRead = true
+    private fun checkAccessRestrictedSettings(): Boolean {
+        return if (
+            canRestrictsRead &&
+            AndroidTarget.UPSIDE_DOWN_CAKE &&
+            app.checkGrantedPermission(Manifest_permission_GET_APP_OPS_STATS)
+        ) {
+            try {
+                // https://cs.android.com/android/platform/superproject/+/android-14.0.0_r55:frameworks/base/services/core/java/com/android/server/appop/AppOpsService.java;l=4237
+                checkAllowedOp(AppOpsManagerHidden.OPSTR_ACCESS_RESTRICTED_SETTINGS)
+            } catch (_: SecurityException) {
+                // https://cs.android.com/android/platform/superproject/+/android-14.0.0_r54:frameworks/base/services/core/java/com/android/server/appop/AppOpsService.java;l=4227
+                canRestrictsRead = false
                 true
-            } else {
-                app.checkGrantedPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            }
-        },
-        request = {
-            if (AndroidTarget.Q) {
-                PermissionResult.Granted
-            } else {
-                asyncRequestPermission(it, PermissionLists.getWriteExternalStoragePermission())
-            }
-        },
-        reason = AuthReason(
-            text = { "当前操作需要「写入外部存储权限」\n请先前往权限页面授权" },
-            confirm = {
-                XXPermissions.startPermissionActivity(
-                    app,
-                    PermissionLists.getWriteExternalStoragePermission()
-                )
-            }
-        ),
-    )
-}
-
-val ignoreBatteryOptimizationsState by lazy {
-    val permission = PermissionLists.getRequestIgnoreBatteryOptimizationsPermission()
-    PermissionState(
-        name = "忽略电池优化权限",
-        check = {
-            app.powerManager.isIgnoringBatteryOptimizations(app.packageName)
-        },
-        request = {
-            asyncRequestPermission(it, permission)
-        },
-        reason = AuthReason(
-            text = { "当前操作需要「忽略电池优化权限」\n请先前往权限页面授权" },
-            confirm = {
-                XXPermissions.startPermissionActivity(
-                    app,
-                    permission
-                )
-            }
-        ),
-    )
-}
-
-val writeSecureSettingsState by lazy {
-    PermissionState(
-        name = "写入安全设置权限",
-        check = { app.checkGrantedPermission(Manifest.permission.WRITE_SECURE_SETTINGS) },
-    )
-}
-
-val privilegeGrantedState by lazy {
-    PermissionState(
-        name = "特权服务",
-        check = {
-            Privilege.pingServer() && privilegeContextFlow.value != null
-        },
-    )
-}
-
-val allPermissionStates by lazy {
-    listOf(
-        notificationState,
-        foregroundServiceSpecialUseState,
-        accessA11yState,
-        createA11yOverlayState,
-        getAppOpsStatsState,
-        accessRestrictedSettingsState,
-        canDrawOverlaysState,
-        canWriteExternalStorage,
-        ignoreBatteryOptimizationsState,
-        writeSecureSettingsState,
-        canQueryPkgState,
-        privilegeGrantedState,
-    )
-}
-
-fun updatePermissionState() {
-    allPermissionStates.forEach {
-        if (it === canQueryPkgState && !updateAppMutex.mutex.isLocked) {
-            if (canQueryPkgState.updateChanged()) {
-                updateAllAppInfo()
             }
         } else {
-            it.updateAndGet()
+            true
+        }
+    }
+
+    private val appOpsAllowed by lazy {
+        PermissionState(
+            name = "启动相关操作权限",
+            check = {
+                val accessA11yAllowed = checkAccessA11y()
+                val createA11yOverlayAllowed = checkCreateA11yOverlay()
+                val accessRestrictedSettingsAllowed = checkAccessRestrictedSettings()
+                accessA11yAllowed && createA11yOverlayAllowed && accessRestrictedSettingsAllowed
+            },
+        )
+    }
+
+    val appOpsRestrictedFlow by lazy {
+        combine(
+            appOpsAllowed.stateFlow,
+            foregroundServiceSpecialUse.stateFlow,
+        ) { appOpsAllowed, foregroundServiceSpecialUseAllowed ->
+            !appOpsAllowed || !foregroundServiceSpecialUseAllowed
+        }.stateIn(appScope, SharingStarted.Eagerly, false)
+    }
+
+    val notification by lazy {
+        requestablePermissionState(
+            name = "通知权限",
+            purpose = "用于显示后台服务运行状态与必要通知",
+            permission = PermissionLists.getPostNotificationsPermission(),
+        )
+    }
+
+    val queryPackages by lazy {
+        requestablePermissionState(
+            name = "读取应用列表权限",
+            purpose = "用于展示设备应用并匹配应用规则",
+            permission = PermissionLists.getGetInstalledAppsPermission(),
+            onChanged = {
+                if (!updateAppMutex.mutex.isLocked) {
+                    updateAllAppInfo()
+                }
+            },
+        )
+    }
+
+    val drawOverlays by lazy {
+        requestablePermissionState(
+            name = "悬浮窗权限",
+            purpose = "用于显示快照按钮、界面信息和事件提示等悬浮内容",
+            permission = PermissionLists.getSystemAlertWindowPermission(),
+            check = {
+                // https://developer.android.com/security/fraud-prevention/activities?hl=zh-cn#hide_overlay_windows
+                Settings.canDrawOverlays(app)
+            },
+        )
+    }
+
+    val writeExternalStorage by lazy {
+        requestablePermissionState(
+            name = "写入外部存储权限",
+            purpose = "用于在 Android 9 及以下保存截图或文件到公共存储",
+            permission = PermissionLists.getWriteExternalStoragePermission(),
+            check = {
+                if (AndroidTarget.Q) {
+                    true
+                } else {
+                    app.checkGrantedPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                }
+            },
+        )
+    }
+
+    val ignoreBatteryOptimizations by lazy {
+        requestablePermissionState(
+            name = "忽略电池优化权限",
+            purpose = "用于降低后台服务被系统休眠或终止的概率",
+            permission = PermissionLists.getRequestIgnoreBatteryOptimizationsPermission(),
+            check = {
+                app.powerManager.isIgnoringBatteryOptimizations(app.packageName)
+            },
+        )
+    }
+
+    val writeSecureSettings by lazy {
+        PermissionState(
+            name = "写入安全设置权限",
+            check = { app.checkGrantedPermission(Manifest.permission.WRITE_SECURE_SETTINGS) },
+        )
+    }
+
+    val privilegeGranted by lazy {
+        PermissionState(
+            name = "特权服务",
+            check = {
+                privilegeContextFlow.value != null && Privilege.pingServer()
+            },
+        )
+    }
+
+    val all by lazy {
+        listOf(
+            notification,
+            foregroundServiceSpecialUse,
+            appOpsAllowed,
+            drawOverlays,
+            writeExternalStorage,
+            ignoreBatteryOptimizations,
+            writeSecureSettings,
+            queryPackages,
+            privilegeGranted,
+        )
+    }
+
+    fun refreshAll() {
+        all.forEach {
+            it.refresh()
         }
     }
 }
