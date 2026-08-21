@@ -97,6 +97,14 @@ fun buildLogFile(): File {
     val files = listOf(dbFolder, storeFolder, subsFolder, logFolder, crashFolder).filter {
         it.list()?.isNotEmpty() == true
     }.toMutableList()
+    tempDir.resolve("source-paths.txt").also { file ->
+        app.assets.open(file.name).use { input ->
+            file.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+        files.add(file)
+    }
     tempDir.resolve("apps.json").also {
         it.writeText(json.encodeToString(AppJsonData()))
         files.add(it)
@@ -122,7 +130,7 @@ fun buildLogFile(): File {
     val formattedJson = Json(from = json) {
         prettyPrint = true
     }
-    tempDir.resolve("gkd-${META.versionCode}-v${META.versionName}.json").also {
+    tempDir.resolve("gkd.json").also {
         it.writeText(formattedJson.encodeToString(META))
         files.add(it)
     }
