@@ -18,7 +18,7 @@
 
 ## 免责声明
 
-**本项目遵循 [GPL-3.0](/LICENSE) 开源，项目仅供学习交流，禁止用于商业或非法用途**
+**本项目遵循 [GPL-3.0-only](/LICENSE) 开源，项目仅供学习交流，禁止用于商业或非法用途**
 
 ## 安装
 
@@ -70,7 +70,7 @@ GKD **默认不提供规则**，需自行添加本地规则，或者通过订阅
 开发过程中的衍生项目，它们正在被 gkd 使用，也许对你有帮助
 
 - [kotlin-json5](https://github.com/lisonge/kotlin-json5)
-- [kotlin-loc](https://github.com/lisonge/kotlin-loc)
+- [kotlin-codeorigin](https://github.com/lisonge/kotlin-codeorigin)
 - [android-api-diff](https://github.com/android-cs/android-api-diff)
 - [remap](https://github.com/lisonge/remap)
 - [priv-kit](https://github.com/priv-kit/priv-kit)
