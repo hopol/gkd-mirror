@@ -20,7 +20,7 @@ object LogUtils {
         tag: String = fileName.substringBeforeLast('.'),
     ) {
         val name = Thread.currentThread().name
-        val actualLoc = loc.substring("li.gkd.app.".length)
+        val actualLoc = loc.removePrefix("li.gkd.app.")
         val texts = args.map { stringify(it) }
         if (META.debuggable) {
             val msg = buildString {
@@ -63,10 +63,10 @@ private val deviceInfoText by lazy {
 }
 
 private fun logToFile(tag: String, name: String, loc: String, texts: List<String>, t: Long) {
-    val file = logFolder.resolve("gkd-${t.format("yyyyMMdd")}.log")
+    val file = FolderUtils.logFolder.resolve("gkd-${t.format("yyyyMMdd")}.log")
     val sb = StringBuilder()
     if (!file.exists()) {
-        val files = logFolder.listFiles()
+        val files = FolderUtils.logFolder.listFiles()
         if (files != null && files.size >= MAX_LOG_KEEP_DAYS) {
             files.forEach {
                 if (t - it.lastModified() > MAX_LOG_KEEP_DAYS.days.inWholeMilliseconds) {

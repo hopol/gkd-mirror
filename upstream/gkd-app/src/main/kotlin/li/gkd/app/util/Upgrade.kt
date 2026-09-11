@@ -1,5 +1,7 @@
 package li.gkd.app.util
 
+import li.gkd.app.util.ToastUtils.toast
+
 import android.content.Intent
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -20,6 +22,7 @@ import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.util.cio.writeChannel
 import io.ktor.utils.io.copyAndClose
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,9 +32,10 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import li.gkd.app.META
 import li.gkd.app.app
-import li.gkd.app.store.createAnyFlow
-import li.gkd.app.store.storeFlow
+import li.gkd.app.store.FileStateStore
+import li.gkd.app.store.AppStore.storeFlow
 import li.gkd.app.ui.component.AppAlertDialog
+import li.songe.codeorigin.CallSite
 import java.io.File
 import java.net.URI
 import kotlin.time.Duration.Companion.days
@@ -44,7 +48,6 @@ private val UPDATE_URL: String
 data class NewVersion(
     val versionCode: Int,
     val versionName: String,
-    val changelog: String,
     val downloadUrl: String,
     val fileSize: Long,
     val versionLogs: List<VersionLog> = emptyList(),
@@ -68,7 +71,7 @@ class UpdateStatus(val scope: CoroutineScope) {
     private var downloadJob: Job? = null
 
     private val ignoreVersionListFlow by lazy {
-        createAnyFlow(
+        FileStateStore.createJsonFlow(
             key = "ignore_version_list",
             default = { emptySet<Int>() },
             scope = scope,
@@ -78,27 +81,44 @@ class UpdateStatus(val scope: CoroutineScope) {
 
     val canRecheck get() = System.currentTimeMillis() - lastCheckTime > 1.days.inWholeMilliseconds
 
-    fun checkUpdate(manual: Boolean = false) = scope.launchTry(Dispatchers.IO, silent = !manual) {
-        lastManual = manual
-        checkUpdatingMutex.whenUnLock {
-            lastCheckTime = System.currentTimeMillis()
-            if (!NetworkUtils.isAvailable()) {
-                error("网络不可用")
+    fun checkUpdate(
+        manual: Boolean = false,
+        @CallSite loc: String = "",
+    ) {
+        scope.launchLogged(Dispatchers.IO, loc = loc) {
+            try {
+                lastManual = manual
+                checkUpdatingMutex.tryWithStateLock {
+                    lastCheckTime = System.currentTimeMillis()
+                    if (!NetworkUtils.isAvailable()) {
+                        error("网络不可用")
+                    }
+                    val newVersion = client.get(UPDATE_URL).body<NewVersion>()
+                    if (newVersion.versionCode <= META.versionCode) {
+                        if (manual) toast("暂无更新", loc = loc)
+                        return@tryWithStateLock
+                    }
+                    if (
+                        !manual &&
+                        ignoreVersionListFlow.value.contains(newVersion.versionCode)
+                    ) return@tryWithStateLock
+                    newVersionFlow.value = newVersion
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (manual) {
+                    toast(e.message ?: e.stackTraceToString(), loc = "")
+                }
+                throw e
             }
-            val newVersion = client.get(UPDATE_URL).body<NewVersion>()
-            if (newVersion.versionCode <= META.versionCode) {
-                if (manual) toast("暂无更新")
-                return@launchTry
-            }
-            if (!manual && ignoreVersionListFlow.value.contains(newVersion.versionCode)) return@launchTry
-            newVersionFlow.value = newVersion
         }
-    }.let { }
+    }
 
     private fun startDownload(newVersion: NewVersion) {
         if (downloadStatusFlow.value is LoadStatus.Loading) return
         downloadStatusFlow.value = LoadStatus.Loading(0f)
-        val apkFile = sharedDir.resolve("gkd-v${newVersion.versionCode}.apk").apply {
+        val apkFile = FolderUtils.sharedDir.resolve("gkd-v${newVersion.versionCode}.apk").apply {
             if (exists()) {
                 delete()
             }
