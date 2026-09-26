@@ -13,6 +13,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import li.gkd.app.text.UiStrings
 import li.gkd.app.data.ComplexSnapshot
 import li.gkd.app.snapshot.SnapshotFileLayout
 import li.gkd.app.snapshot.commitSnapshotDirectory
@@ -21,6 +22,7 @@ import li.gkd.app.util.LogUtils
 import li.gkd.app.util.ZipUtils
 import li.gkd.app.data.appinfo.AppInfoRepository
 import li.gkd.app.util.FolderUtils
+import li.gkd.app.util.ExportFileNames
 import li.gkd.app.util.json
 import li.gkd.app.util.keepNullJson
 import li.gkd.app.util.webpLossyCompressFormat
@@ -33,6 +35,11 @@ import java.util.UUID
 object SnapshotRepository : SnapshotStore(
     snapshotDao = Db.snapshotDao,
     snapshotRoot = FolderUtils.snapshotFolder,
+)
+
+data class SnapshotUploadArchive(
+    val file: File,
+    val screenshotModifiedAt: Long,
 )
 
 open class SnapshotStore(
@@ -48,10 +55,19 @@ open class SnapshotStore(
 
     fun snapshots(): Flow<List<Snapshot>> = snapshotDao.query()
 
-    suspend fun markUploaded(snapshot: Snapshot, githubAssetId: Int) =
+    suspend fun markUploaded(
+        snapshotId: Long,
+        githubAssetId: Int,
+        screenshotModifiedAt: Long,
+    ): Boolean = mutationMutex.withLock {
         withContext(Dispatchers.IO) {
-            snapshotDao.update(snapshot.copy(githubAssetId = githubAssetId))
+            val screenshot = fileLayout.committed(snapshotId).screenshotFile
+            if (!screenshot.isFile || screenshot.lastModified() != screenshotModifiedAt) {
+                return@withContext false
+            }
+            snapshotDao.markUploadedIfPending(snapshotId, githubAssetId) > 0
         }
+    }
 
     suspend fun getMinSnapshot(id: Long): JsonObject = mutationMutex.withLock {
         val files = fileLayout.committed(id)
@@ -95,26 +111,6 @@ open class SnapshotStore(
         }
     }
 
-    suspend fun deleteAll() = mutationMutex.withLock {
-        currentCoroutineContext().ensureActive()
-        withContext(NonCancellable + Dispatchers.IO) {
-            val snapshotRoot = fileLayout.rootDirectory
-            val staged = stageDeletion(snapshotRoot)
-            if (!snapshotRoot.mkdirs()) {
-                val error = IOException("无法重建快照目录")
-                rollbackDeletion(snapshotRoot, staged, error)
-                throw error
-            }
-            try {
-                snapshotDao.deleteAll()
-            } catch (e: Throwable) {
-                rollbackDeletion(snapshotRoot, staged, e)
-                throw e
-            }
-            finishDeletion(staged)
-        }
-    }
-
     suspend fun replaceScreenshot(snapshot: Snapshot, newBytes: ByteArray): Boolean =
         mutationMutex.withLock {
             withContext(Dispatchers.IO) {
@@ -139,7 +135,7 @@ open class SnapshotStore(
                 try {
                     FileOutputStream(tempFile).use { stream ->
                         if (!newBitmap.compress(webpLossyCompressFormat, 85, stream)) {
-                            throw IOException("替换截图压缩失败")
+                            throw IOException(UiStrings.screenshot_replacement_compress_failed)
                         }
                         stream.fd.sync()
                     }
@@ -148,9 +144,7 @@ open class SnapshotStore(
                         val previousWebp = stageReplacement(files.webpFile)
                         try {
                             Os.rename(tempFile.absolutePath, files.webpFile.absolutePath)
-                            if (snapshot.githubAssetId != null) {
-                                snapshotDao.deleteGithubAssetId(snapshot.id)
-                            }
+                            snapshotDao.deleteGithubAssetId(snapshot.id)
                         } catch (e: Throwable) {
                             files.webpFile.delete()
                             restoreReplacement(files.webpFile, previousWebp, e)
@@ -169,54 +163,77 @@ open class SnapshotStore(
             }
         }
 
+    suspend fun createUploadArchive(snapshotId: Long): SnapshotUploadArchive =
+        mutationMutex.withLock {
+            val screenshotModifiedAt = withContext(Dispatchers.IO) {
+                fileLayout.committed(snapshotId).screenshotFile.lastModified()
+            }
+            SnapshotUploadArchive(
+                file = createArchiveLocked(snapshotId),
+                screenshotModifiedAt = screenshotModifiedAt,
+            )
+        }
+
     suspend fun createArchive(
         snapshotId: Long,
         appId: String? = null,
         activityId: String? = null,
     ): File =
         mutationMutex.withLock {
-            withContext(Dispatchers.IO) {
-                val filename = if (appId != null) {
-                    val appName = AppInfoRepository.appInfoMapFlow.value[appId]?.name
-                        ?.filterNot { char -> char in "\\/:*?\"<>|" || char <= ' ' }
-                    if (activityId != null) {
-                        "${(appName ?: appId).take(20)}_${
-                            activityId.split('.').last().take(40)
-                        }-${snapshotId}.zip"
-                    } else {
-                        "${(appName ?: appId).take(20)}-${snapshotId}.zip"
-                    }
+            createArchiveLocked(snapshotId, appId, activityId)
+        }
+
+    private suspend fun createArchiveLocked(
+        snapshotId: Long,
+        appId: String? = null,
+        activityId: String? = null,
+    ): File =
+        withContext(Dispatchers.IO) {
+            val filename = if (appId != null) {
+                val appName = AppInfoRepository.appInfoMapFlow.value[appId]?.name
+                    ?.filterNot { char -> char in "\\/:*?\"<>|" || char <= ' ' }
+                val stem = if (activityId != null) {
+                    "${(appName ?: appId).take(20)}_${
+                        activityId.split('.').last().take(40)
+                    }-${ExportFileNames.timestamp(snapshotId)}"
                 } else {
-                    "${snapshotId}.zip"
+                    "${(appName ?: appId).take(20)}-${ExportFileNames.timestamp(snapshotId)}"
                 }
-                require(File(filename).name == filename) { "无效压缩包名称" }
-                FolderUtils.clearCache()
-                val outputDirectory = FolderUtils.sharedDir.resolve(
-                    "snapshot-$snapshotId-${UUID.randomUUID()}"
-                )
-                if (!outputDirectory.mkdirs()) {
-                    throw IOException("无法创建快照压缩目录")
+                ExportFileNames.availableName(stem, "zip") { name ->
+                    FolderUtils.sharedDir.listFiles().orEmpty().any { directory ->
+                        directory.isDirectory && directory.name.startsWith("snapshot-") &&
+                            directory.resolve(name).exists()
+                    }
                 }
-                val outputFile = outputDirectory.resolve(filename)
-                try {
-                    val files = fileLayout.committed(snapshotId)
-                    if (!files.hasCompleteFiles) {
-                        throw IOException("快照文件不完整: $snapshotId")
-                    }
-                    if (!ZipUtils.zipFiles(
-                            listOf(files.snapshotFile, files.screenshotFile),
-                            outputFile,
-                        )
-                    ) {
-                        throw IOException("快照压缩失败")
-                    }
-                    outputFile
-                } catch (e: Throwable) {
-                    if (!outputDirectory.deleteRecursively()) {
-                        e.addSuppressed(IOException("无法清理快照压缩目录"))
-                    }
-                    throw e
+            } else {
+                "${snapshotId}.zip"
+            }
+            require(File(filename).name == filename) { UiStrings.archive_name_invalid }
+            val outputDirectory = FolderUtils.sharedDir.resolve(
+                "snapshot-$snapshotId-${UUID.randomUUID()}"
+            )
+            if (!outputDirectory.mkdirs()) {
+                throw IOException(UiStrings.snapshot_archive_directory_create_failed)
+            }
+            val outputFile = outputDirectory.resolve(filename)
+            try {
+                val files = fileLayout.committed(snapshotId)
+                if (!files.hasCompleteFiles) {
+                    throw IOException(UiStrings.snapshot_files_incomplete(snapshotId))
                 }
+                if (!ZipUtils.zipFiles(
+                        listOf(files.snapshotFile, files.screenshotFile),
+                        outputFile,
+                    )
+                ) {
+                    throw IOException(UiStrings.snapshot_compress_failed)
+                }
+                outputFile
+            } catch (e: Throwable) {
+                if (!outputDirectory.deleteRecursively()) {
+                    e.addSuppressed(IOException(UiStrings.snapshot_archive_directory_cleanup_failed))
+                }
+                throw e
             }
         }
 
@@ -238,7 +255,7 @@ open class SnapshotStore(
                 write = { files ->
                     files.webpFile.outputStream().use { stream ->
                         if (!bitmap.compress(webpLossyCompressFormat, 85, stream)) {
-                            throw IOException("快照截图压缩失败")
+                            throw IOException(UiStrings.snapshot_screenshot_compress_failed)
                         }
                     }
                     files.snapshotFile.writeText(
@@ -260,7 +277,7 @@ open class SnapshotStore(
         val staged = requireNotNull(target.parentFile)
             .resolve(".${target.name}.delete-${UUID.randomUUID()}")
         if (!target.renameTo(staged)) {
-            throw IOException("无法暂存待删除目录: ${target.name}")
+            throw IOException(UiStrings.directory_stage_delete_failed(target.name))
         }
         return staged
     }
@@ -268,11 +285,11 @@ open class SnapshotStore(
     private fun rollbackDeletion(target: File, staged: File?, cause: Throwable) {
         if (staged == null) return
         if (target.exists() && !target.deleteRecursively()) {
-            cause.addSuppressed(IOException("无法清理回滚目标: ${target.name}"))
+            cause.addSuppressed(IOException(UiStrings.directory_rollback_cleanup_failed(target.name)))
             return
         }
         if (!staged.renameTo(target)) {
-            cause.addSuppressed(IOException("无法恢复快照目录: ${target.name}"))
+            cause.addSuppressed(IOException(UiStrings.snapshot_directory_restore_failed(target.name)))
         }
     }
 
@@ -287,14 +304,14 @@ open class SnapshotStore(
         val staged = requireNotNull(target.parentFile)
             .resolve(".${target.name}.replace-${UUID.randomUUID()}")
         if (!target.renameTo(staged)) {
-            throw IOException("无法暂存旧快照截图")
+            throw IOException(UiStrings.screenshot_stage_old_failed)
         }
         return staged
     }
 
     private fun restoreReplacement(target: File, staged: File?, cause: Throwable) {
         if (staged != null && !staged.renameTo(target)) {
-            cause.addSuppressed(IOException("无法恢复旧快照截图"))
+            cause.addSuppressed(IOException(UiStrings.screenshot_restore_old_failed))
         }
     }
 

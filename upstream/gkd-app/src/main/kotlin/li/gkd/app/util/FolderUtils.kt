@@ -2,6 +2,9 @@ package li.gkd.app.util
 
 import android.text.format.DateUtils
 import androidx.annotation.WorkerThread
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import li.gkd.app.META
@@ -77,6 +80,25 @@ object FolderUtils {
         removeExpired(tempDir)
     }
 
+    suspend fun deleteSharedFile(file: File) = withContext(NonCancellable + Dispatchers.IO) {
+        if (file.parentFile == sharedDir && file.exists() && !file.delete()) {
+            LogUtils.d("无法清理共享缓存文件", file.absolutePath)
+        }
+    }
+
+    suspend fun <T> withTemporaryZip(
+        create: suspend () -> File,
+        delete: suspend (File) -> Unit,
+        consume: suspend (File) -> T,
+    ): T {
+        val file = create()
+        try {
+            return consume(file)
+        } finally {
+            withContext(NonCancellable) { delete(file) }
+        }
+    }
+
     @Serializable
     private data class AppJsonData(
         val userId: Int = currentUserId,
@@ -128,9 +150,19 @@ object FolderUtils {
             it.writeText(formattedJson.encodeToString(META))
             files.add(it)
         }
-        val logZipFile = sharedDir.resolve("log-${System.currentTimeMillis()}.zip")
-        ZipUtils.zipFiles(files, logZipFile)
-        tempDir.deleteRecursively()
-        return logZipFile
+        val logZipFile = ExportFileNames.reserve(
+            sharedDir,
+            "log-${ExportFileNames.timestamp(System.currentTimeMillis())}",
+            "zip",
+        )
+        try {
+            ZipUtils.zipFiles(files, logZipFile)
+            return logZipFile
+        } catch (e: Throwable) {
+            logZipFile.delete()
+            throw e
+        } finally {
+            tempDir.deleteRecursively()
+        }
     }
 }

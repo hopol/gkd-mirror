@@ -16,10 +16,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.withContext
+import li.gkd.app.text.UiStrings
 import li.gkd.app.MainActivity
 import li.gkd.app.util.FolderUtils
 import li.gkd.app.ui.share.launchUi
-import li.gkd.app.util.throttle
+import li.gkd.app.util.TimeUtils.throttle
+import li.gkd.app.util.ToastUtils.toast
 
 class ShareLogState(
     private val scope: CoroutineScope,
@@ -39,24 +41,31 @@ class ShareLogState(
         dismiss()
         scope.launchUi {
             val logZipFile = withContext(Dispatchers.IO) { FolderUtils.buildLogFile() }
-            context.shareFile(logZipFile, "分享日志文件")
+            context.shareFile(logZipFile, UiStrings.logs_share_file)
         }
     }
 
     private fun save(context: MainActivity) {
         dismiss()
         scope.launchUi {
-            val logZipFile = withContext(Dispatchers.IO) { FolderUtils.buildLogFile() }
-            context.saveFileToDownloads(logZipFile)
+            FolderUtils.withTemporaryZip(
+                create = { withContext(Dispatchers.IO) { FolderUtils.buildLogFile() } },
+                delete = FolderUtils::deleteSharedFile,
+            ) { logZipFile ->
+                context.saveFileToDownloads(logZipFile)
+            }
         }
     }
 
     private fun upload() {
         dismiss()
-        githubUpload.startTask(
+        val item = GithubUploadItem(
+            label = UiStrings.logs_title,
             getFile = { FolderUtils.buildLogFile() },
             showHref = { "http://i.gkd.li/log/${it.id}" },
+            releaseFile = FolderUtils::deleteSharedFile,
         )
+        if (!githubUpload.startTask(item)) toast(UiStrings.upload_busy)
     }
 
     @Composable
@@ -64,7 +73,7 @@ class ShareLogState(
         val visible by visibleFlow.collectAsStateWithLifecycle()
         if (visible) {
             val context = LocalActivity.current as MainActivity
-            AppDialog(onDismissRequest = ::dismiss) {
+            GkDialog(onDismissRequest = ::dismiss) {
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -75,19 +84,19 @@ class ShareLogState(
                         .fillMaxWidth()
                         .padding(16.dp)
                     Text(
-                        text = "分享到其他应用",
+                        text = UiStrings.action_share,
                         modifier = Modifier
                             .clickable(onClick = throttle { share(context) })
                             .then(modifier),
                     )
                     Text(
-                        text = "保存到下载",
+                        text = UiStrings.action_save_to_downloads,
                         modifier = Modifier
                             .clickable(onClick = throttle { save(context) })
                             .then(modifier),
                     )
                     Text(
-                        text = "生成链接(需科学上网)",
+                        text = UiStrings.upload_generate_link,
                         modifier = Modifier
                             .clickable(onClick = throttle(::upload))
                             .then(modifier),

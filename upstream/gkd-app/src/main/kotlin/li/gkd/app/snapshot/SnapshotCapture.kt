@@ -15,6 +15,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
+import li.gkd.app.text.UiStrings
 import li.gkd.app.a11y.A11yRuntime
 import li.gkd.app.a11y.currentTopActivity
 import li.gkd.app.data.ComplexSnapshot
@@ -28,6 +29,7 @@ import li.gkd.app.store.AppStore.storeFlow
 import li.gkd.app.util.AndroidTarget
 import li.gkd.app.util.AutomatorModeOption
 import li.gkd.app.util.BarUtils
+import li.gkd.app.util.FolderUtils
 import li.gkd.app.util.LogUtils
 import li.gkd.app.util.ScreenUtils
 import li.gkd.app.util.SystemDownloads
@@ -55,7 +57,7 @@ object SnapshotCapture {
             textAlign = Paint.Align.CENTER
         }
         val canvas = Canvas(bitmap)
-        val lines = listOf("未获取到屏幕画面", "请手动替换截图")
+        val lines = listOf(UiStrings.screenshot_frame_missing, UiStrings.screenshot_replace_manually)
         lines.forEachIndexed { index, line ->
             canvas.drawText(
                 line,
@@ -230,13 +232,13 @@ object SnapshotCapture {
     }
 
     suspend fun capture(forcedCropStatusBar: Boolean = false): ComplexSnapshot {
-        val service = A11yRuntime.service ?: throw RpcError("服务不可用，请先授权")
+        val service = A11yRuntime.service ?: throw RpcError(UiStrings.service_unavailable_authorize)
         if (!captureMutex.tryLock()) {
-            throw RpcError("正在保存快照，不可重复操作")
+            throw RpcError(UiStrings.snapshot_save_in_progress)
         }
         try {
             val rootNode = A11yRuntime.getRoot(service)
-                ?: throw RpcError("当前应用没有无障碍信息，捕获失败")
+                ?: throw RpcError(UiStrings.snapshot_app_a11y_missing)
             val snapshotId = System.currentTimeMillis()
             val appId = rootNode.packageName.toString()
             val screenHeight = ScreenUtils.getScreenHeight()
@@ -274,15 +276,17 @@ object SnapshotCapture {
                 storeFlow.value.autoSaveSnapshotToDownloads && SystemDownloads.canSave()
             ) {
                 try {
-                    val archive = SnapshotRepository.createArchive(
-                        snapshot.id,
-                        snapshot.appId,
-                        snapshot.activityId,
-                    )
-                    try {
-                        SystemDownloads.save(archive)
-                    } finally {
-                        SnapshotRepository.deleteArchive(archive)
+                    FolderUtils.withTemporaryZip(
+                        create = {
+                            SnapshotRepository.createArchive(
+                                snapshot.id,
+                                snapshot.appId,
+                                snapshot.activityId,
+                            )
+                        },
+                        delete = SnapshotRepository::deleteArchive,
+                    ) { archive ->
+                        SystemDownloads.save(archive) != null
                     }
                 } catch (e: CancellationException) {
                     throw e
@@ -302,9 +306,9 @@ object SnapshotCapture {
             ).post()
             val statusDetail = screenResult.status.detailText()
             val toastText = if (statusDetail == null) {
-                "快照已保存"
+                UiStrings.snapshot_saved
             } else {
-                "快照已保存 ($statusDetail)"
+                UiStrings.snapshot_saved_warning(statusDetail)
             }
             toast(toastText, forced = true)
             return snapshot
