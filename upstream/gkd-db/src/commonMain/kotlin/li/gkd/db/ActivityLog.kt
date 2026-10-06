@@ -12,7 +12,9 @@ import androidx.room3.Query
 import androidx.room3.migration.AutoMigrationSpec
 import androidx.room3.paging.PagingSourceDaoReturnTypeConverter
 import kotlinx.coroutines.flow.Flow
+import kotlinx.serialization.Serializable
 
+@Serializable
 @Entity(
     tableName = "activity_log",
 )
@@ -37,11 +39,7 @@ data class ActivityLog(
         @Query(
             """
             DELETE FROM activity_log
-            WHERE (
-                    SELECT COUNT(*)
-                    FROM activity_log
-                ) > 500
-                AND ctime <= (
+            WHERE ctime <= (
                     SELECT ctime
                     FROM activity_log
                     ORDER BY ctime DESC
