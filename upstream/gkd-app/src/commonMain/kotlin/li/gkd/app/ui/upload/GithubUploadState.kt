@@ -3,6 +3,7 @@ package li.gkd.app.ui.upload
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -13,22 +14,20 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import li.gkd.app.network.AppLinks
 import li.gkd.app.network.GithubCookieException
 import li.gkd.app.network.GithubPoliciesAsset
 import li.gkd.app.network.GithubUploader
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.github_cookie_expired
-import li.gkd.app.resources.update_success
-import li.gkd.app.resources.upload_cancelled
-import li.gkd.app.resources.upload_cookie_required
+import li.gkd.app.resources.*
 import li.gkd.app.settings.GithubCookieStore
 import li.gkd.app.ui.component.GithubUploadStatus
 import li.gkd.app.ui.component.GkGithubUploadDialogs
+import li.gkd.app.ui.navigation.AppNavigator
 import li.gkd.app.ui.text.displayMessage
 import li.gkd.app.ui.text.getSync
 import li.gkd.app.util.LogUtils
+import li.gkd.app.util.ToastUtils
 import org.jetbrains.compose.resources.getString
-import java.io.File
 
 class GithubUploadItem(
     val label: String,
@@ -49,8 +48,7 @@ private class GithubUploadRequest(
 
 class GithubUploadState(
     private val scope: CoroutineScope,
-    private val onOpenCookieHelp: () -> Unit,
-    private val toast: (String) -> Unit,
+    private val navigator: AppNavigator,
 ) {
     private val cookieEditorVisibleFlow = MutableStateFlow(false)
     private val cookieDraftFlow = MutableStateFlow("")
@@ -77,7 +75,7 @@ class GithubUploadState(
         activeRequest = request
         val cookie = GithubCookieStore.value.value
         if (cookie.isEmpty()) {
-            toast(Res.string.upload_cookie_required.getSync())
+            ToastUtils.show(Res.string.upload_cookie_required.getSync())
             showCookieEditor()
         } else {
             executeRequest(request, cookie)
@@ -93,7 +91,7 @@ class GithubUploadState(
         hideCookieEditor()
         activeRequest = null
         closeUploadStatus()
-        onOpenCookieHelp()
+        navigator.openWebPage(AppLinks.CookieHelp)
     }
 
     private fun executeRequest(request: GithubUploadRequest, cookie: String) {
@@ -204,13 +202,13 @@ class GithubUploadState(
             try {
                 GithubCookieStore.save(cookie)
                 hideCookieEditor()
-                toast(getString(Res.string.update_success))
+                ToastUtils.show(getString(Res.string.update_success))
                 activeRequest?.takeIf { it.pendingItems.isNotEmpty() && uploadJob == null }
                     ?.let { executeRequest(it, cookie) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                toast(e.displayMessage())
+                ToastUtils.show(e.displayMessage())
             }
         }
     }
@@ -235,7 +233,7 @@ class GithubUploadState(
     }
 
     @Composable
-    fun Render() {
+    fun Render(onCopy: (String) -> Unit) {
         val cookieEditorVisible by cookieEditorVisibleFlow.collectAsStateWithLifecycle()
         val cookieDraft by cookieDraftFlow.collectAsStateWithLifecycle()
         val status by statusFlow.collectAsStateWithLifecycle()
@@ -250,7 +248,8 @@ class GithubUploadState(
             ::saveCookie,
             ::stopTask,
             ::closeUploadStatus,
-            ::showCookieEditor
+            ::showCookieEditor,
+            onCopy,
         )
     }
 }

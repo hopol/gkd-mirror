@@ -7,8 +7,14 @@ import li.gkd.app.subscription.RawSubscription
 data class GlobalAppScope(
     val enabled: Boolean,
     val included: List<String>,
-    val excluded: List<String>
+    val excluded: List<String>,
+    val versionAllowed: Boolean = true,
+    val explicitlyIncluded: Boolean = true,
 )
+
+enum class GlobalAppDefaultOffReason {
+    Launcher, SystemApp, LocalDefault, SubscriptionDefault, SubscriptionApp, SameNameAppGroup,
+}
 
 /** Pure applicability rules shared by execution and the settings UI. */
 object RuleScopePolicy {
@@ -19,14 +25,13 @@ object RuleScopePolicy {
         info == null || (props.versionCode?.match(info.versionCode) != false &&
                 props.versionName?.match(info.versionName) != false)
 
-    fun globalAppEnabled(app: RawSubscription.RawGlobalApp, info: AppInfo?): Boolean =
-        app.enable ?: versionMatches(app, info)
-
-    fun globalScope(app: RawSubscription.RawGlobalApp, info: AppInfo?): GlobalAppScope =
+    fun globalScope(app: RawSubscription.RawGlobalApp, info: AppInfo?, explicitlyIncluded: Boolean = true): GlobalAppScope =
         GlobalAppScope(
-            globalAppEnabled(app, info),
+            app.enable != false,
             fixActivities(app.id, app.activityIds),
             fixActivities(app.id, app.excludeActivityIds),
+            versionMatches(app, info),
+            explicitlyIncluded,
         )
 
     fun appVersionMatches(
@@ -42,34 +47,65 @@ object RuleScopePolicy {
         group: RawSubscription.RawGlobalGroup,
         rule: RawSubscription.RawGlobalRule?,
         appId: String,
-    ): RawSubscription.RawGlobalApp? =
-        (rule?.apps ?: group.apps).orEmpty().lastOrNull { it.id == appId }
+    ): RawSubscription.RawGlobalApp? {
+        val parent = group.apps.orEmpty().lastOrNull { it.id == appId }
+        val child = rule?.apps.orEmpty().lastOrNull { it.id == appId }
+        if (parent == null && child == null) return null
+        return RawSubscription.RawGlobalApp(
+            id = appId,
+            enable = parent?.enable,
+            activityIds = child?.activityIds ?: parent?.activityIds,
+            excludeActivityIds = child?.excludeActivityIds ?: parent?.excludeActivityIds,
+            versionCode = child?.versionCode ?: parent?.versionCode,
+            versionName = child?.versionName ?: parent?.versionName,
+        )
+    }
 
-    fun globalDefault(
+    fun globalAppDisabled(group: RawSubscription.RawGlobalGroup, appId: String): Boolean =
+        group.apps.orEmpty().lastOrNull { it.id == appId }?.enable == false
+
+    fun globalDefaultOffReason(
         group: RawSubscription.RawGlobalGroup,
-        rule: RawSubscription.RawGlobalRule?,
         appId: String,
         launcherAppId: String,
         systemAppIds: Set<String>,
-    ): Boolean {
-        if (globalApp(group, rule, appId) != null) return true
-        if (appId == launcherAppId && !(rule?.matchLauncher ?: group.matchLauncher
-            ?: false)
-        ) return false
-        if (appId in systemAppIds && !(rule?.matchSystemApp ?: group.matchSystemApp
-            ?: false)
-        ) return false
-        return rule?.matchAnyApp ?: group.matchAnyApp ?: true
+        matchAnyApp: Boolean? = null,
+        explicitlyIncluded: Boolean = group.apps.orEmpty().any { it.id == appId },
+    ): GlobalAppDefaultOffReason? = when {
+        explicitlyIncluded -> null
+        appId == launcherAppId && group.matchLauncher != true -> GlobalAppDefaultOffReason.Launcher
+        appId in systemAppIds && group.matchSystemApp != true -> GlobalAppDefaultOffReason.SystemApp
+        matchAnyApp == false -> GlobalAppDefaultOffReason.LocalDefault
+        matchAnyApp == null && group.matchAnyApp == false -> GlobalAppDefaultOffReason.SubscriptionDefault
+        else -> null
     }
 
-    fun globalRuleAllowed(
+    fun globalRuleRestriction(
         group: RawSubscription.RawGlobalGroup,
         rule: RawSubscription.RawGlobalRule?,
         appId: String,
         info: AppInfo?,
         groupExcluded: Boolean,
-    ): Boolean =
-        !groupExcluded && globalApp(group, rule, appId)?.let { globalAppEnabled(it, info) } != false
+        manuallyEnabled: Boolean = false,
+    ): RuleRestriction? {
+        val app = globalApp(group, rule, appId)
+        return globalAppRestriction(
+            app?.enable != false, app == null || versionMatches(app, info),
+            groupExcluded, manuallyEnabled,
+        )
+    }
+
+    private fun globalAppRestriction(
+        enabled: Boolean,
+        versionAllowed: Boolean,
+        groupExcluded: Boolean,
+        manuallyEnabled: Boolean,
+    ): RuleRestriction? = when {
+        !manuallyEnabled && groupExcluded -> RuleRestriction.ShadowedByAppRule
+        !manuallyEnabled && !enabled -> RuleRestriction.AppExcluded
+        !versionAllowed -> RuleRestriction.VersionMismatch
+        else -> null
+    }
 
     fun matchGlobalActivity(
         app: GlobalAppScope?,
@@ -79,14 +115,19 @@ object RuleScopePolicy {
         groupExcluded: Boolean,
         exclude: ExcludeData,
     ): Boolean {
-        if (groupExcluded || app?.enabled == false) return false
+        val manuallyEnabled = exclude.appIds[appId] == false
+        if (globalAppRestriction(
+                app?.enabled != false, app?.versionAllowed != false, groupExcluded, manuallyEnabled,
+            ) != null
+        ) return false
         if (exclude.appIds[appId] == true) return false
         // Personal global page entries have always been exact activity IDs.
         if (activityId != null && appId to activityId in exclude.activityIds) return false
         if (activityId != null && app?.excluded.orEmpty().any(activityId::startsWith)) return false
         if (exclude.appIds[appId] == false) return true
         if (app != null) {
-            return activityId == null || app.included.isEmpty() || app.included.any(activityId::startsWith)
+            return (app.explicitlyIncluded || defaultEnabled) &&
+                    (activityId == null || app.included.isEmpty() || app.included.any(activityId::startsWith))
         }
         return defaultEnabled
     }

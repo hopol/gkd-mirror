@@ -5,6 +5,7 @@ import androidx.paging.PagingConfig
 import androidx.paging.cachedIn
 import androidx.paging.map
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
@@ -13,10 +14,9 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
+import li.gkd.app.app.AppInfoRepository
 import li.gkd.app.model.ExcludeData
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.rule_missing
-import li.gkd.app.resources.subscription_missing
+import li.gkd.app.resources.*
 import li.gkd.app.rule.RuleGroupConfigService
 import li.gkd.app.rule.RuleGroupTarget
 import li.gkd.app.rule.RuleSetting
@@ -25,6 +25,7 @@ import li.gkd.app.rule.toRuleGroupTarget
 import li.gkd.app.rule.toSwitchTarget
 import li.gkd.app.state.Loadable
 import li.gkd.app.subscription.RawSubscription
+import li.gkd.app.ui.MainViewModel
 import li.gkd.app.subscription.SubscriptionRepository
 import li.gkd.app.ui.navigation.ActionLogRoute
 import li.gkd.app.ui.state.BaseViewModel
@@ -49,24 +50,54 @@ data class ActionLogDialogState(
     val subsConfig: SubsGroupConfig?,
     val subscription: RawSubscription?,
     val group: RawSubscription.RawGroupProps?,
-    val configs: Loadable<SubscriptionConfigSnapshot>,
+    val configs: SubscriptionConfigSnapshot?,
+    val loadState: Loadable<Unit>,
     val activityDisabled: Boolean,
 )
+
+data class ActionLogAppOption(val id: String, val name: String)
 
 class ActionLogViewModel(
     val route: ActionLogRoute,
 ) : BaseViewModel() {
 
-    val pagingDataFlow = Pager(PagingConfig(pageSize = 100)) {
-        val subsId = route.subsId
-        val appId = route.appId
-        when {
-            subsId != null -> Db.actionLogDao.pagingSubsSource(subsId)
-            appId != null -> Db.actionLogDao.pagingAppSource(appId)
-            else -> Db.actionLogDao.pagingSource()
-        }
+    val filterAppIds: StateFlow<Set<String>>
+        field = MutableStateFlow(emptySet())
+
+    fun toggleFilterApp(appId: String) {
+        filterAppIds.value = filterAppIds.value.let { if (appId in it) it - appId else it + appId }
     }
-        .flow
+
+    fun clearAppFilter() {
+        filterAppIds.value = emptySet()
+    }
+
+    fun removeFilterApp(appId: String) {
+        filterAppIds.value = filterAppIds.value - appId
+    }
+
+    val filterQuery: StateFlow<String>
+        field = MutableStateFlow("")
+
+    fun setFilterQuery(query: String) {
+        filterQuery.value = query
+    }
+
+    val filterApps: StateFlow<Loadable<List<ActionLogAppOption>>> = combine(
+        Db.actionLogDao.queryAppIds(route.subsId), AppInfoRepository.state, filterQuery,
+    ) { ids, catalog, query ->
+        ids.map { ActionLogAppOption(it, catalog.snapshot?.apps?.get(it)?.name ?: it) }
+            .filter { it.id.contains(query, ignoreCase = true) || it.name.contains(query, ignoreCase = true) }
+    }.map<List<ActionLogAppOption>, Loadable<List<ActionLogAppOption>>> { Loadable.Ready(it) }
+        .onStart { emit(Loadable.Loading) }
+        .catch { emit(Loadable.Failure(it)) }
+        .stateIn(scope, SharingStarted.WhileSubscribed(5_000), Loadable.Loading)
+
+    val pagingDataFlow = filterAppIds.flatMapLatest { appIds ->
+        Pager(PagingConfig(pageSize = 100)) {
+            Db.actionLogDao.pagingSource(route.subsId, route.appId?.let(::listOf) ?: appIds.toList())
+        }.flow
+    }
         .cachedIn(scope)
         .combine(SubscriptionRepository.snapshotFlow) { pagingData, snapshot ->
             val subsMap = snapshot.value?.subscriptions.orEmpty()
@@ -123,12 +154,20 @@ class ActionLogViewModel(
                         it.subsId == actionLog.subsId && it.appId == actionLog.appId && it.groupKey == actionLog.groupKey
                     } else configs.value?.globalGroupConfigs?.find { it.subsId == actionLog.subsId && it.groupKey == actionLog.groupKey }
                 val exclude = ExcludeData.parse(subsConfig?.exclude)
+                val subscriptionError = snapshot.value?.loadErrors?.get(actionLog.subsId)
                 ActionLogDialogState(
                     actionLog = actionLog,
                     subsConfig = subsConfig,
                     subscription = subscription,
                     group = group,
-                    configs = configs,
+                    configs = configs.value,
+                    loadState = when {
+                        configs is Loadable.Failure -> configs
+                        snapshot is Loadable.Failure -> snapshot
+                        configs is Loadable.Loading || snapshot is Loadable.Loading -> Loadable.Loading
+                        subscriptionError != null -> Loadable.Failure(subscriptionError)
+                        else -> Loadable.Ready(Unit)
+                    },
                     activityDisabled = actionLog.activityId?.let { activityId ->
                         exclude.activityIds.contains(actionLog.appId to activityId)
                     } ?: false,
@@ -158,12 +197,12 @@ class ActionLogViewModel(
             listOf(
                 group.toRuleGroupTarget(subscription.id, state.actionLog.appId).toSwitchTarget()
             ),
-            listOf(subscription), checkNotNull(state.configs.value)
+            listOf(subscription), checkNotNull(state.configs)
         )
     }
 
     suspend fun applySwitch(request: RuleSwitchRequest, setting: RuleSetting) =
-        RuleGroupConfigService.apply(request, setting)
+        applyRuleSwitchWithConfirmation(request, setting, MainViewModel.requireCurrent().dialogRequests, RuleSwitchHost.RuleDetail)
 
     suspend fun updateActivityExclusion(state: ActionLogDialogState) {
         val actionLog = state.actionLog

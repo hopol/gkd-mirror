@@ -1,11 +1,14 @@
 package li.gkd.app.ui.component
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -17,10 +20,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.action_cancel
-import li.gkd.app.resources.action_ok
-import li.gkd.app.resources.action_understood
+import li.gkd.app.resources.*
 import org.jetbrains.compose.resources.getString
 import kotlin.coroutines.resume
 
@@ -112,7 +112,7 @@ class DialogRequests {
         if (currentRequest != null) {
             GkAlertDialog(
                 title = { Text(text = currentRequest.title) },
-                text = { Text(text = currentRequest.text) },
+                text = { Text(text = currentRequest.text, modifier = Modifier.verticalScroll(rememberScrollState())) },
                 onDismissRequest = {
                     if (currentRequest.dismissOnRequest) {
                         dismissCurrent()

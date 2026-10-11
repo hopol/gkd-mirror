@@ -1,15 +1,12 @@
 package li.gkd.app.ui.subscription
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import li.gkd.app.app.AppInfoRepository
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.remote_rule_delete_unsupported
-import li.gkd.app.resources.selected_rules_no_copyable
-import li.gkd.app.resources.selected_rules_reselect
-import li.gkd.app.resources.subscription_app_not_loaded
+import li.gkd.app.resources.*
 import li.gkd.app.rule.RuleGroupConfigService
 import li.gkd.app.rule.RuleSetting
 import li.gkd.app.rule.RuleSwitchRequest
@@ -36,6 +33,22 @@ data class SubsAppGroupListUiState(
 class SubsAppGroupListViewModel(
     val route: SubsAppGroupListRoute,
 ) : BaseViewModel() {
+    val categorySelection: StateFlow<AppRuleCategorySelection>
+        field = MutableStateFlow(
+            if (route.focusGroupKey == null) AppRuleCategorySelection.All else AppRuleCategorySelection.FocusedRule
+        )
+
+    fun selectCategory(selection: AppRuleCategorySelection) {
+        categorySelection.value = selection
+    }
+
+    val showAppSetting: StateFlow<Boolean>
+        field = MutableStateFlow(false)
+
+    fun setShowAppSetting(value: Boolean) {
+        showAppSetting.value = value
+    }
+
     private val batchMutex = MutexState()
     fun removeFromWhitelist() {
         SettingsRepository.updateBlockMatchAppList { it - route.appId }

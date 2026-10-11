@@ -16,6 +16,7 @@ class DatabaseStoreIntegrationTest {
         try {
             Db.actionLogDao.count().first()
             SubscriptionConfigStoreChecks().apply {
+                defaultAppScopeSurvivesOtherUpdatesAndResetsWithoutLosingOverrides()
                 explicitAppAndGroupSettingsSurviveChangesToTheirDefaults()
                 resettingAppGateAndGroupSettingsPreservesOtherScopesAndPageExclusions()
                 aFailedMixedScopeTransactionDoesNotLeavePartiallyChangedSwitches()
@@ -29,6 +30,7 @@ class DatabaseStoreIntegrationTest {
                 failedImportDoesNotRollBackANormalWriteWaitingForTheTransaction()
             }
             RuntimeRecordStoreChecks().apply {
+                appFiltersKeepSubscriptionScopeAndIncludeGlobalRuleActions()
                 secondVisitFailureRollsBackFirstVisitAndRetryKeepsNewestValue()
                 actionTrimFailureRollsBackInsertAndRetryDoesNotDuplicate()
                 activityTrimFailureRetainsOldRowsAndRollsBackTheWholeBatch()

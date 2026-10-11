@@ -19,23 +19,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.action_close
-import li.gkd.app.resources.action_delete
-import li.gkd.app.resources.action_turn_on
-import li.gkd.app.resources.categories_delete_confirmation
-import li.gkd.app.resources.categories_empty
-import li.gkd.app.resources.category_add
-import li.gkd.app.resources.category_delete
-import li.gkd.app.resources.category_follow_subscription
-import li.gkd.app.resources.category_help
-import li.gkd.app.resources.category_help_description
-import li.gkd.app.resources.category_use_group_default
-import li.gkd.app.resources.delete_success
-import li.gkd.app.resources.rule_categories
-import li.gkd.app.resources.update_success
+import li.gkd.app.resources.*
 import li.gkd.app.rule.CategorySetting
-import li.gkd.app.ui.component.DialogRequests
+import li.gkd.app.ui.MainViewModel
 import li.gkd.app.ui.component.GkAnimatedFloatingActionButton
 import li.gkd.app.ui.component.GkBatchActionMenuItem
 import li.gkd.app.ui.component.GkEmptyState
@@ -54,30 +40,27 @@ import li.gkd.app.ui.component.GkTooltipIconButtonBox
 import li.gkd.app.ui.component.GkTwoLineText
 import li.gkd.app.ui.component.rememberListScrollState
 import li.gkd.app.ui.component.rememberMultiSelectionState
-import li.gkd.app.ui.navigation.AppRoute
 import li.gkd.app.ui.navigation.CategoryEditorRoute
-import li.gkd.app.ui.navigation.GkBackHandler
 import li.gkd.app.ui.navigation.SubsCategoryGroupRoute
 import li.gkd.app.ui.navigation.SubsCategoryRoute
-import li.gkd.app.ui.navigation.launchUi
+import li.gkd.app.ui.platform.GkBackHandler
 import li.gkd.app.ui.share.ListPlaceholder
+import li.gkd.app.ui.share.launchUi
 import li.gkd.app.ui.style.scaffoldPadding
+import li.gkd.app.util.ToastUtils
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun SubsCategoryPage(
     route: SubsCategoryRoute,
-    onBack: () -> Unit,
-    onNavigate: (AppRoute) -> Unit,
-    showToast: (String) -> Unit,
-    dialogs: DialogRequests,
 ) {
+    val mainVm = MainViewModel.requireCurrent()
     val vm = viewModel { SubsCategoryViewModel(route) }
     val busy by vm.busyFlow.collectAsStateWithLifecycle()
     val selection = rememberMultiSelectionState<Int>()
     GkBackHandler(selection.active) { selection.clear() }
-    GkSubscriptionPageContent(vm.uiState, onBack) { state ->
+    GkSubscriptionPageContent(vm.uiState, mainVm.navigator::pop) { state ->
         val subs = state.subscription
         val scroll = rememberListScrollState()
         val keys =
@@ -86,10 +69,10 @@ fun SubsCategoryPage(
         LaunchedEffect(keys) { selection.retain(keys) }
         fun setSelected(setting: CategorySetting) {
             val selectedKeys = selected
-            launchUi(vm.scope, showToast) {
+            vm.scope.launchUi {
                 vm.runAction {
                     vm.setSettings(state, selectedKeys, setting)
-                    showToast(getString(Res.string.update_success))
+                    ToastUtils.show(getString(Res.string.update_success))
                 }
             }
         }
@@ -100,7 +83,7 @@ fun SubsCategoryPage(
                     selectedMode = selection.active,
                     selectedCount = selected.size,
                     onExitSelection = selection::clear,
-                    onNavigateBack = onBack,
+                    onNavigateBack = mainVm.navigator::pop,
                     onTitleClick = scroll::resetScroll,
                     scrollBehavior = scroll.scrollBehavior,
                     title = {
@@ -131,9 +114,9 @@ fun SubsCategoryPage(
                                         dismiss,
                                         {
                                             val selectedKeys = selected
-                                            launchUi(vm.scope, showToast) {
+                                            vm.scope.launchUi {
                                                 vm.runAction {
-                                                    if (!dialogs.confirm(
+                                                    if (!mainVm.dialogRequests.confirm(
                                                             title = getString(Res.string.category_delete),
                                                             text = getString(
                                                                 Res.string.categories_delete_confirmation,
@@ -144,7 +127,7 @@ fun SubsCategoryPage(
                                                     ) return@runAction
                                                     vm.deleteCategories(state, selectedKeys)
                                                     selection.removeDeleted(selectedKeys)
-                                                    showToast(getString(Res.string.delete_success))
+                                                    ToastUtils.show(getString(Res.string.delete_success))
                                                 }
                                             }
                                         })
@@ -155,8 +138,8 @@ fun SubsCategoryPage(
                                 imageVector = GkIcons.Info,
                                 contentDescription = stringResource(Res.string.category_help),
                                 onClick = {
-                                    launchUi(vm.scope, showToast) {
-                                        dialogs.showMessage(
+                                    vm.scope.launchUi {
+                                        mainVm.dialogRequests.showMessage(
                                             title = getString(Res.string.category_help),
                                             text = getString(Res.string.category_help_description),
                                         )
@@ -170,7 +153,7 @@ fun SubsCategoryPage(
                 if (subs.isLocal) {
                     GkAnimatedFloatingActionButton(
                         visible = !selection.active,
-                        onClick = { onNavigate(CategoryEditorRoute(subs.id)) },
+                        onClick = { mainVm.navigator.navigate(CategoryEditorRoute(subs.id)) },
                         imageVector = GkIcons.Add,
                         contentDescription = stringResource(Res.string.category_add),
                     )
@@ -190,7 +173,7 @@ fun SubsCategoryPage(
                         onLongClick = { selection.select(summary.category.key) },
                         onSelect = { selection.toggle(summary.category.key) },
                         onOpen = {
-                            onNavigate(
+                            mainVm.navigator.navigate(
                                 SubsCategoryGroupRoute(
                                     subs.id,
                                     summary.category.key

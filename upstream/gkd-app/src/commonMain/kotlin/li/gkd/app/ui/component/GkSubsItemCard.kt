@@ -34,33 +34,14 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.author_description
-import li.gkd.app.resources.disabled
-import li.gkd.app.resources.enabled
-import li.gkd.app.resources.file_missing
-import li.gkd.app.resources.loading_progress
-import li.gkd.app.resources.not_selected
-import li.gkd.app.resources.selected
-import li.gkd.app.resources.selection_deselect
-import li.gkd.app.resources.selection_mode_enter
-import li.gkd.app.resources.selection_select
-import li.gkd.app.resources.subscription_details_view
-import li.gkd.app.resources.subscription_id_description
-import li.gkd.app.resources.subscription_numbered_name
-import li.gkd.app.resources.subscription_order_description
-import li.gkd.app.resources.subscription_switch_paused_description
-import li.gkd.app.resources.subscription_version_description
-import li.gkd.app.resources.update_error_detail
-import li.gkd.app.resources.update_time_description
-import li.gkd.app.resources.version_prefixed
+import li.gkd.app.resources.*
 import org.jetbrains.compose.resources.stringResource
 
 data class SubscriptionCardData(
     val id: Long, val enabled: Boolean, val name: String?, val version: Int = 0,
     val author: String? = null, val globalGroups: Int = 0, val apps: Int = 0,
     val appGroups: Int = 0, val updatedAt: String, val appName: String,
-    val loadError: String? = null, val refreshError: String? = null,
+    val loadError: String? = null, val updateFailed: Boolean = false,
 )
 
 @Composable
@@ -244,12 +225,9 @@ fun GkSubsItemCard(
                         color = color
                     )
                 }
-                if (data.refreshError != null) {
+                if (data.updateFailed) {
                     Text(
-                        text = stringResource(
-                            Res.string.update_error_detail,
-                            data.refreshError.orEmpty()
-                        ),
+                        text = stringResource(Res.string.subscription_update_failed),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.error
                     )

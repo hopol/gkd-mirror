@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="global_rule_default_apps">在应用中默认启用</string>
+    <string name="global_rule_default_apps_follow">跟随订阅</string>
+    <string name="global_rule_default_apps_follow_enabled">跟随订阅：默认开启</string>
+    <string name="global_rule_default_apps_follow_disabled">跟随订阅：默认关闭</string>
+    <string name="global_rule_default_apps_enabled">默认开启</string>
+    <string name="global_rule_default_apps_disabled">默认关闭</string>
     <string name="a11y_about">关于无障碍</string>
     <string name="a11y_automation_mode_notice">当前为自动化模式，无障碍将自动关闭</string>
     <string name="a11y_background_running_warning">必须确保服务关闭后的持续后台运行，否则会被系统暂停或结束运行导致重启失败</string>
@@ -59,6 +65,9 @@
     <string name="action_install">安装</string>
     <string name="action_log_activity_unknown">界面未记录</string>
     <string name="action_log_description">规则误触可定位关闭</string>
+    <string name="action_log_filter_app">筛选应用</string>
+    <string name="action_log_filter_remove">移除 %1$s 的应用筛选</string>
+    <string name="action_log_filter_selected">已选 %1$s 个应用</string>
     <string name="action_log_open">打开触发记录页面</string>
     <string name="action_log_open_app">查看应用</string>
     <string name="action_log_recent_prefix">最近触发: </string>
@@ -129,7 +138,7 @@
     <string name="app_rule_missing">应用规则已不存在</string>
     <string name="app_rule_summary_open">前往应用的规则汇总页面</string>
     <string name="app_rules">应用规则</string>
-    <string name="app_rules_batch_setting_confirmation">是否将所选 %1$s 个规则组全部%2$s?\n\n全局规则仅调整在当前应用的开关。\n保留全局规则总开关、应用设置和页面排除。</string>
+    <string name="app_rules_batch_setting_confirmation">是否将所选 %1$s 个规则组全部%2$s？</string>
     <string name="app_rules_view_list">查看应用规则列表</string>
     <string name="app_search_hint">搜索应用名称或包名</string>
     <string name="app_sort_filter">排序与应用筛选</string>
@@ -147,7 +156,6 @@
     <string name="apps_user">用户应用</string>
     <string name="archive_file_count_exceeded">压缩包文件数量超过限制: %1$s</string>
     <string name="archive_file_too_large">压缩包文件过大: %1$s</string>
-    <string name="archive_name_invalid">无效压缩包名称</string>
     <string name="archive_path_invalid">压缩包包含非法路径: %1$s</string>
     <string name="archive_path_outside_destination">压缩包路径越界: %1$s</string>
     <string name="archive_total_size_exceeded">压缩包解压总量超过限制</string>
@@ -171,7 +179,6 @@
     <string name="autostart_allow">允许自启动</string>
     <string name="background_running">持续后台运行</string>
     <string name="backup_archive_too_large">备份压缩包超过大小限制</string>
-    <string name="backup_compress_failed">备份压缩失败</string>
     <string name="backup_duplicate_subscription_id">备份中存在重复订阅id</string>
     <string name="backup_export">导出备份</string>
     <string name="backup_import_confirmation">备份会写入应用设置、订阅和规则配置，是否继续？</string>
@@ -179,7 +186,6 @@
     <string name="backup_import_progress">导入备份中...</string>
     <string name="backup_import_skipped_config_count">导入成功，已跳过 %1$s 条所属订阅已不存在的配置</string>
     <string name="backup_invalid_archive">解压失败，非法备份文件</string>
-    <string name="backup_read_failed">无法读取备份文件</string>
     <string name="backup_reselect_file">无法读取备份文件，请重新选择文件</string>
     <string name="backup_restore">备份恢复</string>
     <string name="backup_share">分享备份文件</string>
@@ -241,7 +247,6 @@
     <string name="category_scope_selected_only">仅处理所选规则组。</string>
     <string name="category_selected_rules_changed">所选类别规则已变化</string>
     <string name="category_settings">类别设置</string>
-    <string name="category_subscription_default">订阅类别默认设置</string>
     <string name="category_subscription_default_value">订阅默认：%1$s</string>
     <string name="category_summary_counts">%1$s 个应用 · %2$s 组规则 · %3$s</string>
     <string name="category_use_group_default">跟随规则组</string>
@@ -281,12 +286,6 @@
     <string name="details_view">查看详情</string>
     <string name="dialog_close">关闭弹窗</string>
     <string name="dialog_close_description">关闭%1$s</string>
-    <string name="directory_commit_failed">无法提交目录: %1$s</string>
-    <string name="directory_delete_failed">无法删除目录: %1$s</string>
-    <string name="directory_rollback_cleanup_failed">无法清理回滚目标: %1$s</string>
-    <string name="directory_stage_delete_failed">无法暂存待删除目录: %1$s</string>
-    <string name="directory_target_exists">目标目录已存在: %1$s</string>
-    <string name="directory_temp_create_failed">无法创建临时目录: %1$s</string>
     <string name="disabled">已禁用</string>
     <string name="documentation_description">查阅规则文档和常见问题</string>
     <string name="documentation_open">打开 GKD 文档页面</string>
@@ -337,7 +336,6 @@
     <string name="feedback_thanks_prefix">感谢您愿意花时间反馈，</string>
     <string name="feedback_title">反馈</string>
     <string name="file_delete_failed">无法删除 %1$s</string>
-    <string name="file_load_failed_or_missing">文件加载错误或不存在</string>
     <string name="file_missing">文件不存在</string>
     <string name="file_not_selected">未选择文件</string>
     <string name="file_saved_to_downloads">已保存 %1$s 到下载</string>
@@ -351,8 +349,20 @@
     <string name="github_cookie_label">GitHub Cookie</string>
     <string name="gkd_learn_more">了解 GKD</string>
     <string name="global_rule_add">添加全局规则</string>
-    <string name="global_rule_app_switch_batch_confirmation">对 %1$s 个应用执行%2$s？仅影响此全局规则在这些应用内的设置，保留规则组总开关和页面排除。</string>
+    <string name="global_rule_app_switch_batch_confirmation">是否对所选 %1$s 个应用执行%2$s？</string>
     <string name="global_rule_app_switch_set">设置应用开关</string>
+    <string name="global_rule_enable_title">要开启吗？</string>
+    <string name="global_rule_enable_batch_title">要全部开启吗？</string>
+    <string name="global_rule_enable_batch_apps">将在选中的 %1$s 个应用里开启这条规则。</string>
+    <string name="global_rule_enable_batch_groups">将开启选中的 %1$s 个规则组。</string>
+    <string name="global_rule_enable_attention">开启前，请留意下面这些情况：</string>
+    <string name="global_rule_enable_risk">开启后可能会点错按钮。</string>
+    <string name="global_rule_enable_similar_risk">同时开启，可能会重复点击或点错按钮。</string>
+    <string name="global_rule_enable_qualified_name">%1$s（%2$s）</string>
+    <string name="global_rule_enable_builtin_warning">订阅默认关闭此应用的全部规则。</string>
+    <string name="global_rule_enable_similar_warning">此应用有名称相近的应用规则：</string>
+    <string name="global_rule_similar_group_enabled">• %1$s（已开启）</string>
+    <string name="global_rule_similar_group_disabled">• %1$s（已关闭）</string>
     <string name="global_rule_batch_setting_confirmation">是否将所选 %1$s 个规则组全部%2$s?\n\n仅调整所选规则组开关，保留应用设置和页面排除。</string>
     <string name="global_rule_breadcrumb">%1$s/全局规则</string>
     <string name="global_rule_group_disabled">全局规则组总开关已关闭</string>
@@ -362,6 +372,10 @@
     <string name="global_rule_scope_input_hint">每行一项：\n应用 ID 表示手动关闭\n!应用 ID 表示手动开启\n应用 ID/页面 ID 表示精确排除页面\n\n删除应用项后跟随默认。\n规则自带限制由订阅提供。</string>
     <string name="global_rule_shadowed_by_app_rule">当前应用存在匹配的应用规则组，按订阅设置停用此全局规则</string>
     <string name="global_rules">全局规则</string>
+    <string name="rule_display_switch_to_category">切换为按分类显示</string>
+    <string name="rule_display_switch_to_flat">切换为普通列表</string>
+    <string name="rule_category_uncategorized">未分类</string>
+    <string name="rule_category_all">全部</string>
     <string name="global_rules_view_list">查看全局规则列表</string>
     <string name="google_play_label">Google Play</string>
     <string name="group_title">分组</string>
@@ -398,7 +412,6 @@
     <string name="image_reading">读取中</string>
     <string name="image_requesting">请求中</string>
     <string name="import_success">导入成功</string>
-    <string name="installed_apps_default_enabled">已安装应用默认开启</string>
     <string name="intent_launch_failed_prefix">跳转失败\n</string>
     <string name="item_toggle_description">切换%1$s</string>
     <string name="keep_alive_permission_description">自动重新开启无障碍服务需要此权限。请前往特权服务页面，启动服务并授权。</string>
@@ -533,7 +546,6 @@
     <string name="rule_app_or_version_mismatch">当前应用或版本不符合要求</string>
     <string name="rule_app_version_mismatch">当前应用版本不符合规则要求</string>
     <string name="rule_batch_setting_confirmation_prefix">是否对所选 %1$s 个规则组执行%2$s？\n\n</string>
-    <string name="rule_builtin_app_scope">规则自带应用范围</string>
     <string name="rule_categories">规则类别</string>
     <string name="rule_categories_view_list">查看规则类别列表</string>
     <string name="rule_clear_custom_settings">清除单独配置</string>
@@ -545,7 +557,6 @@
     <string name="rule_copy">复制规则</string>
     <string name="rule_current_app_scope">仅此全局规则在当前应用内</string>
     <string name="rule_current_restrictions">当前限制</string>
-    <string name="rule_custom_setting">单独配置</string>
     <string name="rule_custom_settings_description">将写入规则组的单独配置，之后不受类别设置影响。</string>
     <string name="rule_delete">删除规则</string>
     <string name="rule_edit">编辑规则</string>
@@ -648,15 +659,12 @@
     <string name="screenshot_replace">替换截图(去除隐私)</string>
     <string name="screenshot_replace_manually">请手动替换截图</string>
     <string name="screenshot_replace_success">替换成功</string>
-    <string name="screenshot_replacement_compress_failed">替换截图压缩失败</string>
-    <string name="screenshot_restore_old_failed">无法恢复旧快照截图</string>
     <string name="screenshot_service">截屏服务</string>
     <string name="screenshot_service_description">生成快照需要获取屏幕截图</string>
     <string name="screenshot_service_init_failed">截屏服务初始化失败</string>
     <string name="screenshot_service_stopped">截屏服务已停止</string>
     <string name="screenshot_service_unavailable">截屏服务不可用</string>
     <string name="screenshot_size_mismatch">截图尺寸不一致, 无法替换</string>
-    <string name="screenshot_stage_old_failed">无法暂存旧快照截图</string>
     <string name="screenshot_thread_unavailable">截屏线程不可用</string>
     <string name="screenshot_virtual_display_failed">创建截屏虚拟显示失败</string>
     <string name="search_clear">清空搜索</string>
@@ -717,8 +725,6 @@
     <string name="share_notice">分享提示</string>
     <string name="snapshot_activity_switch_missing">未检测到界面切换，捕获失败</string>
     <string name="snapshot_app_a11y_missing">当前应用没有无障碍信息，捕获失败</string>
-    <string name="snapshot_archive_directory_cleanup_failed">无法清理快照压缩目录</string>
-    <string name="snapshot_archive_directory_create_failed">无法创建快照压缩目录</string>
     <string name="snapshot_auto_export">自动保存至下载</string>
     <string name="snapshot_auto_export_description">快照完成后导出 ZIP 文件</string>
     <string name="upload_batch_progress">正在上传第 %1$s/%2$s 条</string>
@@ -730,7 +736,6 @@
     <string name="snapshot_button_notification_description">点击按钮捕获快照</string>
     <string name="snapshot_button_service">快照按钮服务</string>
     <string name="snapshot_capture_methods">生成方式</string>
-    <string name="snapshot_compress_failed">快照压缩失败</string>
     <string name="snapshot_copy_links_upload_all_confirmation">所选 %1$s 条快照均未生成链接。生成后会显示链接。</string>
     <string name="snapshot_copy_links_upload_some_confirmation">有 %1$s 条快照尚未生成链接。生成后显示所有已生成的链接；取消则只显示已有链接。</string>
     <string name="snapshot_delete">删除快照</string>
@@ -742,7 +747,6 @@
     <string name="snapshot_save_selected_success">已保存 %1$s 条</string>
     <string name="snapshot_save_selected_partial">已保存 %1$s 条，失败 %2$s 条</string>
     <string name="snapshot_delete_success">快照删除成功</string>
-    <string name="snapshot_directory_restore_failed">无法恢复快照目录: %1$s</string>
     <string name="snapshot_event_selector">特征事件选择器</string>
     <string name="snapshot_event_selector_hint">请输入特征事件选择器</string>
     <string name="snapshot_files_incomplete">快照文件不完整: %1$s</string>
@@ -761,7 +765,6 @@
     <string name="snapshot_saved">快照已保存</string>
     <string name="snapshot_saved_app">快照已保存 · %1$s</string>
     <string name="snapshot_saved_warning">快照已保存 (%1$s)</string>
-    <string name="snapshot_screenshot_compress_failed">快照截图压缩失败</string>
     <string name="snapshot_screenshot_settings">截屏快照设置</string>
     <string name="snapshot_screenshot_settings_open">打开配置截屏快照弹窗</string>
     <string name="snapshot_screenshot_trigger">截屏快照</string>
@@ -812,7 +815,6 @@
     <string name="subscription_details_view">查看订阅详情</string>
     <string name="subscription_disabled">订阅已关闭</string>
     <string name="subscription_duplicate_link">已有相同链接订阅</string>
-    <string name="subscription_edit">修改订阅</string>
     <string name="subscription_edit_success">成功修改订阅</string>
     <string name="subscription_exists">订阅已存在</string>
     <string name="subscription_file_delete_cancelled">删除订阅文件失败，已取消删除</string>
@@ -828,14 +830,11 @@
     <string name="subscription_help">订阅帮助</string>
     <string name="subscription_id_description">id=%1$s</string>
     <string name="subscription_id_immutable">订阅id不可修改: %1$s -&gt; %2$s</string>
-    <string name="subscription_id_mismatched">订阅id不对应</string>
     <string name="subscription_id_reserved">订阅id不可为%1$s\n负数id为内部使用</string>
     <string name="subscription_invalid_filename">非法订阅文件名: %1$s</string>
     <string name="subscription_item_id_mismatch">订阅与订阅项id不一致: %1$s != %2$s</string>
     <string name="subscription_link">订阅链接</string>
-    <string name="subscription_link_edit">编辑订阅链接</string>
     <string name="subscription_link_input_hint">请输入订阅链接</string>
-    <string name="subscription_link_view">查看订阅链接</string>
     <string name="subscription_load_failed">订阅加载失败</string>
     <string name="subscription_local">本地订阅</string>
     <string name="subscription_memory">内存订阅</string>
@@ -910,13 +909,13 @@
     <string name="tutorial_view">获取教程</string>
     <string name="unchanged">未修改</string>
     <string name="unknown">未知</string>
-    <string name="unzip_directory_create_failed">无法创建解压目录: %1$s</string>
     <string name="update_channel">更新渠道</string>
     <string name="update_channel_beta">测试版</string>
     <string name="update_channel_stable">稳定版</string>
     <string name="update_check">检查更新</string>
     <string name="update_download">下载更新</string>
-    <string name="update_error_detail">更新错误: %1$s</string>
+    <string name="subscription_update_failed">更新失败</string>
+    <string name="subscription_update_error_dismiss">关闭更新错误提示</string>
     <string name="update_interval_daily">每天</string>
     <string name="update_interval_three_days">每3天</string>
     <string name="update_interval_weekly">每7天</string>
@@ -992,9 +991,6 @@
     <string name="rule_control_disabled">已关闭</string>
     <string name="rule_control_restricted">当前受限</string>
     <string name="rule_control_group_off">规则组开关已关闭</string>
-    <string name="rule_control_upstream_blocked">被上级条件阻断</string>
-    <string name="rule_control_already_decided">已由前序设置决定，无需采用</string>
-    <string name="rule_control_deciding_step">决定当前结果</string>
     <string name="rule_control_deciding_reason">决定结果 · %1$s</string>
     <string name="app_rule_whitelist_notice">此应用内不执行规则，规则开关配置保留。</string>
     <string name="app_rule_whitelist_follow_notice">此应用内不执行规则，规则开关配置保留。局部关闭跟随此名单。</string>
@@ -1032,4 +1028,39 @@
     <string name="restriction_app_accessibility">无障碍访问</string>
     <string name="restriction_app_settings">受限设置访问</string>
     <string name="restriction_app_foreground">特殊用途前台服务</string>
+    <string name="global_control_group">规则组开关</string>
+    <string name="global_control_app">在此应用中的设置</string>
+    <string name="global_control_default_app">在此应用中的默认设置</string>
+    <string name="global_control_default_group">规则组默认</string>
+    <string name="global_control_name_off">已有名称匹配的应用规则组</string>
+    <string name="global_control_launcher_off">桌面应用默认关闭</string>
+    <string name="global_control_system_off">系统应用默认关闭</string>
+    <string name="global_control_local_off">本地设置为默认关闭</string>
+    <string name="global_control_subscription_off">订阅设置为默认关闭</string>
+    <string name="global_control_app_off">订阅对此应用默认关闭</string>
+    <string name="global_control_group_hint">是否在某个应用中生效，还要看该应用的设置。</string>
+    <string name="global_control_pages_hint">在已排除的页面中不运行规则。</string>
+    <string name="global_control_partial">部分规则仍不可用，可在“范围与排除”中查看限制。</string>
+    <string name="global_control_enabled">开关已开启</string>
+    <string name="global_rule_enable_name_list_warning">此应用已有以下应用规则，因此这条全局规则默认关闭：</string>
+    <string name="simulation_services">服务生命周期（模拟）</string>
+    <string name="simulation_services_description">HTTP 服务实际监听本机端口；其他服务仅模拟启停与授权，不执行 Android 截屏或悬浮窗。</string>
+    <string name="simulation_service_status">%1$s（模拟）：%2$s</string>
+    <string name="simulation_stopped">已停止</string>
+    <string name="simulation_authorizing">等待授权</string>
+    <string name="simulation_starting">启动中</string>
+    <string name="simulation_running">运行中</string>
+    <string name="simulation_failed">失败</string>
+    <string name="simulation_start">启动</string>
+    <string name="simulation_success">成功</string>
+    <string name="simulation_manual">手动完成</string>
+    <string name="simulation_authorization_dialog">弹窗确认</string>
+    <string name="simulation_start_result">启动结果</string>
+    <string name="simulation_authorization_result">授权结果</string>
+    <string name="simulation_complete">连接完成</string>
+    <string name="simulation_terminate">异常终止</string>
+    <string name="simulation_authorization_title">%1$s（模拟授权）</string>
+    <string name="simulation_authorization_message">是否允许本次模拟启动？此操作不会获取真实 Android 权限。</string>
+    <string name="simulation_accessibility_enabled">无障碍系统开关（模拟，开启后可处于未连接状态）</string>
+    <string name="snapshot_share_preparing">正在准备分享</string>
 </resources>

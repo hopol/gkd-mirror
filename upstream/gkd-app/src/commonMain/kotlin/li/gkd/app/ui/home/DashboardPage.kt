@@ -27,7 +27,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -40,44 +39,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import li.gkd.app.app.AppInfoRepository
 import li.gkd.app.network.AppLinks
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.action_count_summary
-import li.gkd.app.resources.action_log_description
-import li.gkd.app.resources.action_log_open
-import li.gkd.app.resources.action_log_recent_prefix
-import li.gkd.app.resources.action_log_title
-import li.gkd.app.resources.activity_log_open
-import li.gkd.app.resources.activity_log_title
-import li.gkd.app.resources.activity_record_description
-import li.gkd.app.resources.adb_permission_restricted
-import li.gkd.app.resources.adb_restricted_privilege_notice
-import li.gkd.app.resources.app_permission_restricted
-import li.gkd.app.resources.app_rule_summary_open
-import li.gkd.app.resources.data_load_failed
-import li.gkd.app.resources.documentation_description
-import li.gkd.app.resources.documentation_open
-import li.gkd.app.resources.gkd_learn_more
-import li.gkd.app.resources.item_toggle_description
-import li.gkd.app.resources.permission_restricted_privilege_notice
-import li.gkd.app.resources.persistent_notification
-import li.gkd.app.resources.privilege_service_open
-import li.gkd.app.resources.privilege_service_state_connected
-import li.gkd.app.resources.privilege_service_state_disconnected
-import li.gkd.app.resources.privilege_service_state_lost
-import li.gkd.app.resources.restriction_details_open
-import li.gkd.app.resources.rules_empty
-import li.gkd.app.resources.service_state
-import li.gkd.app.resources.service_state_toggle
-import li.gkd.app.resources.status_statistics_description
-import li.gkd.app.resources.subscription_app_rule_counts
-import li.gkd.app.resources.subscription_global_count
-import li.gkd.app.resources.work_mode_open
-import li.gkd.app.resources.work_mode_title
+import li.gkd.app.resources.*
 import li.gkd.app.rule.RuleGroupSnapshot
 import li.gkd.app.rule.ruleGroupState
 import li.gkd.app.settings.SettingsRepository
 import li.gkd.app.state.Loadable
 import li.gkd.app.subscription.SubscriptionRepository
+import li.gkd.app.ui.MainViewModel
 import li.gkd.app.ui.component.GkGroupNameText
 import li.gkd.app.ui.component.GkIcon
 import li.gkd.app.ui.component.GkIcons
@@ -92,15 +60,13 @@ import li.gkd.app.ui.icon.GkAnimatedRocketIcon
 import li.gkd.app.ui.navigation.ActionLogRoute
 import li.gkd.app.ui.navigation.ActivityLogRoute
 import li.gkd.app.ui.navigation.AppConfigRoute
-import li.gkd.app.ui.navigation.AppRoute
-import li.gkd.app.ui.navigation.AppWindow
 import li.gkd.app.ui.navigation.PrivilegeServiceRoute
-import li.gkd.app.ui.navigation.WebViewRoute
 import li.gkd.app.ui.navigation.WorkModeRoute
-import li.gkd.app.ui.navigation.setStatusServiceEnabled
-import li.gkd.app.ui.navigation.switchAutomator
 import li.gkd.app.ui.option.AutomatorModeOption
 import li.gkd.app.ui.option.findOption
+import li.gkd.app.ui.platform.UiHost
+import li.gkd.app.ui.platform.setStatusServiceEnabled
+import li.gkd.app.ui.platform.switchAutomator
 import li.gkd.app.ui.settings.appVersion
 import li.gkd.app.ui.style.itemHorizontalPadding
 import li.gkd.app.ui.style.itemVerticalPadding
@@ -145,22 +111,22 @@ fun dashboardSummary(state: Loadable<RuleGroupSnapshot>, actionCount: Long): Str
 
 @Composable
 fun dashboardPage(
-    window: AppWindow,
+    host: UiHost,
     vm: HomeViewModel,
-    onNavigate: (AppRoute) -> Unit,
 ): ScaffoldExt {
-    val appName = window.appVersion().appName
+    val mainVm = MainViewModel.requireCurrent()
+    val appName = appVersion().appName
     val store by SettingsRepository.settings.collectAsStateWithLifecycle()
     val scopeApps by SettingsRepository.a11yScopeAppList.collectAsStateWithLifecycle()
-    val platform = window.dashboardPlatformState()
-    var showRestrictionDetails by rememberSaveable { mutableStateOf(false) }
+    val platform = dashboardPlatformState()
+    val showRestrictionDetails by vm.showRestrictionDetails.collectAsStateWithLifecycle()
     if (showRestrictionDetails) {
         GkPermissionRestrictionDialog(
             privilegeAvailable = platform.privilegeAvailable,
             capabilities = platform.privilegeCapabilities,
             appRestrictions = platform.appRestrictions,
-            onDismiss = { showRestrictionDetails = false },
-            onPrivilege = { onNavigate(PrivilegeServiceRoute) },
+            onDismiss = { vm.setShowRestrictionDetails(false) },
+            onPrivilege = { mainVm.navigator.navigate(PrivilegeServiceRoute) },
         )
     }
     val latestState by vm.latestState.collectAsStateWithLifecycle()
@@ -204,7 +170,7 @@ fun dashboardPage(
                 actions = {
                     GkTooltipIconButtonBox(privilegeLabel) {
                         IconButton(
-                            onClick = { onNavigate(PrivilegeServiceRoute) },
+                            onClick = { mainVm.navigator.navigate(PrivilegeServiceRoute) },
                             modifier =
                                 Modifier.semantics {
                                     onClick(
@@ -255,7 +221,7 @@ fun dashboardPage(
                             CardDefaults.cardColors(
                                 containerColor = MaterialTheme.colorScheme.errorContainer
                             ),
-                        onClick = { showRestrictionDetails = true },
+                        onClick = { vm.setShowRestrictionDetails(true) },
                     ) {
                         Row(
                             Modifier.fillMaxWidth().padding(itemVerticalPadding),
@@ -297,13 +263,13 @@ fun dashboardPage(
                     platform.serviceEnabled(store, scopeApps),
                     { enabled ->
                         when (val route = platform.authorizationRoute(enabled, store, scopeApps)) {
-                            PrivilegeServiceRoute -> showRestrictionDetails = true
-                            null -> window.switchAutomator()
-                            else -> onNavigate(route)
+                            PrivilegeServiceRoute -> vm.setShowRestrictionDetails(true)
+                            null -> switchAutomator()
+                            else -> mainVm.navigator.navigate(route)
                         }
                     },
                     AutomatorModeOption.objects.findOption(store.automatorMode).label,
-                    { onNavigate(WorkModeRoute) },
+                    { mainVm.navigator.navigate(WorkModeRoute) },
                 )
             }
             PageSwitchItemCard(
@@ -311,7 +277,7 @@ fun dashboardPage(
                 stringResource(Res.string.persistent_notification),
                 stringResource(Res.string.status_statistics_description),
                 platform.statusRunning && store.enableStatusService,
-                window::setStatusServiceEnabled,
+                host::setStatusServiceEnabled,
             )
             TriggerOverviewCard(
                 dashboardSummary(rules, actionCount),
@@ -321,8 +287,8 @@ fun dashboardPage(
                     appCatalog.snapshot?.apps.orEmpty(),
                 ),
                 (latest?.groupType == RuleGroupType.Global),
-                { onNavigate(ActionLogRoute()) },
-                { latest?.let { onNavigate(AppConfigRoute(it.appId, focusLog = it)) } },
+                { mainVm.navigator.navigate(ActionLogRoute()) },
+                { latest?.let { mainVm.navigator.navigate(AppConfigRoute(it.appId, focusLog = it)) } },
                 (latestState is Loadable.Failure),
             )
             if (platform.activityRunning) {
@@ -331,7 +297,7 @@ fun dashboardPage(
                     stringResource(Res.string.activity_log_title),
                     stringResource(Res.string.activity_record_description),
                     stringResource(Res.string.activity_log_open),
-                    { onNavigate(ActivityLogRoute) },
+                    { mainVm.navigator.navigate(ActivityLogRoute) },
                 )
             }
             PageItemCard(
@@ -339,7 +305,7 @@ fun dashboardPage(
                 stringResource(Res.string.gkd_learn_more),
                 stringResource(Res.string.documentation_description),
                 stringResource(Res.string.documentation_open),
-                { onNavigate(WebViewRoute(AppLinks.Home)) },
+                { mainVm.navigator.openWebPage(AppLinks.Home) },
             )
             GkPageBottomSpace()
         }

@@ -1,6 +1,7 @@
 package li.gkd.app.ui.subscription
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
@@ -10,8 +11,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.withContext
 import li.gkd.app.app.AppInfoRepository
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.selected_app_rules_no_copyable
+import li.gkd.app.resources.*
 import li.gkd.app.rule.RuleGroupConfigService
 import li.gkd.app.rule.RuleGroupTarget
 import li.gkd.app.rule.RuleSetting
@@ -21,6 +21,7 @@ import li.gkd.app.settings.SettingsRepository
 import li.gkd.app.state.Loadable
 import li.gkd.app.state.MutexState
 import li.gkd.app.subscription.RawSubscription
+import li.gkd.app.ui.MainViewModel
 import li.gkd.app.subscription.SubscriptionJson.toJson5String
 import li.gkd.app.subscription.SubscriptionRepository
 import li.gkd.app.ui.navigation.AppConfigRoute
@@ -45,6 +46,22 @@ data class AppConfigUiState(
 class AppConfigViewModel(
     val route: AppConfigRoute,
 ) : BaseViewModel() {
+    val categorySelection: StateFlow<AppRuleCategorySelection>
+        field = MutableStateFlow(
+            if (route.focusLog == null) AppRuleCategorySelection.Global else AppRuleCategorySelection.FocusedRule
+        )
+
+    fun selectCategory(selection: AppRuleCategorySelection) {
+        categorySelection.value = selection
+    }
+
+    val revealDisabledRules: StateFlow<Boolean>
+        field = MutableStateFlow(false)
+
+    fun setRevealDisabledRules(value: Boolean) {
+        revealDisabledRules.value = value
+    }
+
     private val batchMutex = MutexState()
     fun removeFromWhitelist() {
         SettingsRepository.updateBlockMatchAppList { it - route.appId }
@@ -114,8 +131,8 @@ class AppConfigViewModel(
             state.subsPairs.map { it.first.subscription }, state.configs
         )
 
-    suspend fun applySwitches(request: RuleSwitchRequest, setting: RuleSetting) =
-        RuleGroupConfigService.apply(request, setting)
+    suspend fun applySwitches(request: RuleSwitchRequest, setting: RuleSetting, confirmation: String? = null) =
+        applyRuleSwitchWithConfirmation(request, setting, MainViewModel.requireCurrent().dialogRequests, RuleSwitchHost.AppRules, confirmation)
 
     suspend fun buildSelectedGroupsText(selectedGroups: Set<RuleGroupTarget>): String =
         withContext(Dispatchers.Default) {
@@ -137,5 +154,4 @@ class AppConfigViewModel(
                 )
             )
         }
-
 }

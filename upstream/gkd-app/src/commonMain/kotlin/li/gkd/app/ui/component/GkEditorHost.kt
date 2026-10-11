@@ -12,11 +12,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.action_cancel
-import li.gkd.app.resources.action_confirm
-import li.gkd.app.resources.edit_discard_confirmation
-import li.gkd.app.resources.notice_title
+import li.gkd.app.resources.*
 import li.gkd.app.ui.text.subscriptionMessageResource
 import org.jetbrains.compose.resources.stringResource
 
@@ -34,6 +30,23 @@ fun GkEditorHost(
     actionScope: CoroutineScope = rememberCoroutineScope(),
     content: @Composable (PaddingValues) -> Unit,
 ) {
+    GkEditorActions(hasChanges, onSave, onClose, onSaved, beforeClose, backHandler, actionScope) { close, save ->
+        GkEditorLayout(title, saveEnabled, close, save, content)
+    }
+}
+
+/** Shared editor actions for both standalone and inline editor layouts. */
+@Composable
+fun GkEditorActions(
+    hasChanges: suspend () -> Boolean,
+    onSave: suspend () -> Unit,
+    onClose: () -> Unit,
+    onSaved: () -> Unit = onClose,
+    beforeClose: () -> Unit = {},
+    backHandler: @Composable (() -> Unit) -> Unit = {},
+    actionScope: CoroutineScope = rememberCoroutineScope(),
+    content: @Composable (onClose: () -> Unit, onSave: () -> Unit) -> Unit,
+) {
     var discard by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<Exception?>(null) }
     val requestClose: () -> Unit = {
@@ -49,7 +62,7 @@ fun GkEditorHost(
         }
     }
     backHandler(requestClose)
-    GkEditorLayout(title, saveEnabled, requestClose, onSave = {
+    content(requestClose, {
         actionScope.launch {
             try {
                 onSave(); beforeClose(); onSaved()
@@ -59,7 +72,7 @@ fun GkEditorHost(
                 error = e
             }
         }
-    }, content = content)
+    })
     if (discard) {
         GkAlertDialog(
             onDismissRequest = { discard = false },

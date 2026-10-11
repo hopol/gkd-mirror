@@ -17,9 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.StateFlow
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.subscription_load_failed
-import li.gkd.app.resources.subscription_title
+import li.gkd.app.resources.*
 import li.gkd.app.state.Loadable
 import li.gkd.app.ui.style.scaffoldPadding
 import li.gkd.app.ui.text.subscriptionMessageResource
@@ -44,7 +42,7 @@ fun <T : Any> GkSubscriptionPageContent(
         Loadable.Loading -> SubscriptionStatePage(onBack = onBack)
         is Loadable.Failure -> SubscriptionStatePage(
             onBack = onBack,
-            message = current.cause.subscriptionMessageResource() ?: stringResource(Res.string.subscription_load_failed),
+            message = current.cause.subscriptionMessageResource(),
         )
 
         is Loadable.Ready -> content(current.value)

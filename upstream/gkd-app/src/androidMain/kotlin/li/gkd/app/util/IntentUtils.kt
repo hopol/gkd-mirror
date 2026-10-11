@@ -2,17 +2,13 @@ package li.gkd.app.util
 
 import android.app.Service
 import android.content.Intent
-import android.net.Uri
 import android.provider.Settings
 import androidx.core.net.toUri
 import li.gkd.app.META
 import li.gkd.app.app
 import li.gkd.app.permission.PermissionStates
 import li.gkd.app.platform.lifecycle.MainActivityVisibility
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.service_launch_failed
-import li.gkd.app.resources.wechat_unavailable
-import li.gkd.app.ui.platform.SystemActionFeedback
+import li.gkd.app.resources.*
 import li.gkd.app.ui.text.getSync
 import li.songe.codeorigin.CallSite
 import kotlin.reflect.KClass
@@ -42,12 +38,6 @@ object IntentUtils {
         }
         app.tryStartActivity(intent)
     }
-
-    fun openUri(uri: String) = SystemActionFeedback.openExternal(
-        uri, ToastUtils::show
-    )
-
-    fun openUri(uri: Uri) = openUri(uri.toString())
 
     fun <T : Service> stopService(clazz: KClass<T>) {
         val intent = Intent(app, clazz.java)

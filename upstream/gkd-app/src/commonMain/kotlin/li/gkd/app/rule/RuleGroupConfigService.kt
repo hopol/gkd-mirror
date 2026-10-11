@@ -91,7 +91,7 @@ object RuleGroupConfigService {
         value: ExcludeData,
         subscription: RawSubscription,
     ) {
-        updateExclusions(subscription, target) { current ->
+        updateGroupConfig(subscription, target) { current ->
             check(ExcludeData.parse(current.exclude) == expected) {
                 throw SubscriptionException(SubscriptionFailureReason.ExclusionConfigConflict)
             }
@@ -107,7 +107,7 @@ object RuleGroupConfigService {
         expectedExcluded: Boolean,
         excluded: Boolean,
     ) {
-        updateExclusions(subscription, target) { current ->
+        updateGroupConfig(subscription, target) { current ->
             val value = ExcludeData.parse(current.exclude)
             val key = appId to activityId
             check((key in value.activityIds) == expectedExcluded) {
@@ -120,7 +120,15 @@ object RuleGroupConfigService {
         }
     }
 
-    private suspend fun updateExclusions(
+    suspend fun setMatchAnyApp(
+        subscription: RawSubscription,
+        target: RuleGroupTarget.Global,
+        value: Boolean?,
+    ) = updateGroupConfig(subscription, target) {
+        (it as SubsGlobalGroupConfig).copy(matchAnyApp = value)
+    }
+
+    private suspend fun updateGroupConfig(
         subscription: RawSubscription,
         target: RuleGroupTarget,
         transform: (SubsGroupConfig) -> SubsGroupConfig,
@@ -157,7 +165,37 @@ object RuleGroupConfigService {
             throw SubscriptionException(SubscriptionFailureReason.SubscriptionUnloadedOrMissing)
         }
         val configIndex = RuleConfigIndex(snapshot)
-        return RuleSwitchRequest(sources, targets.distinct().associateWith(configIndex::setting))
+        val expected = targets.distinct().associateWith(configIndex::setting)
+        return RuleSwitchRequest(
+            sources, expected,
+            expected.mapNotNull { (target, setting) ->
+                if (target !is RuleSwitchTarget.GlobalApp || setting == RuleSetting.Enabled) return@mapNotNull null
+                val subscription = sources.getValue(target.subsId)
+                val group = subscription.globalGroups.find { it.key == target.groupKey }
+                    ?: return@mapNotNull null
+                val builtInDisabled = RuleScopePolicy.globalAppDisabled(group, target.appId)
+                val matchingGroups = subscription.globalGroupAppGroupMatches[group.key]?.get(target.appId).orEmpty()
+                val excludedByGroupName = matchingGroups.isNotEmpty()
+                val similarGroups = subscription.getAppGroups(target.appId).filter {
+                    it.name.contains(group.name) || group.name.contains(it.name) ||
+                            it in matchingGroups
+                }.map {
+                    val category = subscription.getCategory(it.name)
+                    SimilarAppGroup(
+                        it.name,
+                        policy.getGroupEnabled(
+                            it, configIndex.groupConfig(RuleGroupTarget.App(target.subsId, target.appId, it.key)),
+                            category, configIndex.categoryConfig(target.subsId, category?.key),
+                        )
+                    )
+                }
+                if (!builtInDisabled && !excludedByGroupName && similarGroups.isEmpty()) return@mapNotNull null
+                GlobalAppEnableWarning(
+                    target, subscription.getApp(target.appId).name ?: target.appId,
+                    group.name, builtInDisabled, excludedByGroupName, similarGroups,
+                )
+            }
+        )
     }
 
     suspend fun apply(request: RuleSwitchRequest, setting: RuleSetting): RuleSwitchResult =
@@ -253,6 +291,7 @@ object RuleGroupConfigService {
 data class RuleSwitchRequest(
     val subscriptions: Map<Long, RawSubscription>,
     val expected: Map<RuleSwitchTarget, RuleSetting>,
+    val enableWarnings: List<GlobalAppEnableWarning> = emptyList(),
 ) {
     fun checkCurrent(configIndex: RuleConfigIndex) {
         check(expected.all { (target, setting) -> configIndex.setting(target) == setting }) {
@@ -260,6 +299,17 @@ data class RuleSwitchRequest(
         }
     }
 }
+
+data class SimilarAppGroup(val name: String, val enabled: Boolean)
+
+data class GlobalAppEnableWarning(
+    val target: RuleSwitchTarget.GlobalApp,
+    val appName: String,
+    val groupName: String,
+    val builtInDisabled: Boolean,
+    val excludedByGroupName: Boolean,
+    val similarGroups: List<SimilarAppGroup>,
+)
 
 data class RuleSwitchResult(
     val changed: Int,

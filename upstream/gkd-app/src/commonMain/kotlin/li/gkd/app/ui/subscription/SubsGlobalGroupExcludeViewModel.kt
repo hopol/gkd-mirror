@@ -1,17 +1,20 @@
 package li.gkd.app.ui.subscription
 
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
 import li.gkd.app.model.ExcludeData
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.global_rule_missing
+import li.gkd.app.resources.*
 import li.gkd.app.rule.RuleGroupConfigService
+import li.gkd.app.rule.RuleGroupTarget
 import li.gkd.app.rule.RuleSetting
 import li.gkd.app.rule.RuleSwitchRequest
 import li.gkd.app.rule.RuleSwitchTarget
 import li.gkd.app.settings.SettingsRepository
 import li.gkd.app.state.MutexState
 import li.gkd.app.subscription.RawSubscription
+import li.gkd.app.ui.MainViewModel
 import li.gkd.app.ui.navigation.SubsGlobalGroupExcludeRoute
 import li.gkd.app.ui.option.AppSortOption
 import li.gkd.app.ui.state.BaseViewModel
@@ -26,9 +29,10 @@ data class SubsGlobalGroupExcludeUiState(
     val configs: SubscriptionConfigSnapshot,
     val appActionOrder: Map<String, Int>,
 ) {
-    val excludeData: ExcludeData = ExcludeData.parse(configs.globalGroupConfigs.find {
+    private val config = configs.globalGroupConfigs.find {
         it.subsId == subscription.id && it.groupKey == group.key
-    }?.exclude)
+    }
+    val excludeData: ExcludeData = ExcludeData.parse(config?.exclude)
     val declaredAppIds: Set<String> = (group.apps.orEmpty().map { it.id } +
             group.rules.flatMap { it.apps.orEmpty().map { app -> app.id } } +
             excludeData.appIds.keys + excludeData.activityIds.map { it.first }).toSet()
@@ -37,6 +41,46 @@ data class SubsGlobalGroupExcludeUiState(
 class SubsGlobalGroupExcludeViewModel(
     val route: SubsGlobalGroupExcludeRoute,
 ) : BaseViewModel() {
+    val draft: StateFlow<RuleExcludeEditorDraft?>
+        field = MutableStateFlow(null)
+    private var saveSession = EditorSaveSession<Boolean>()
+
+    fun startEditing(state: SubsGlobalGroupExcludeUiState) {
+        saveSession = EditorSaveSession()
+        draft.value = RuleExcludeEditorDraft(
+            state.subscription, state.excludeData, state.excludeData.stringify(),
+        )
+    }
+
+    fun setDraftText(value: String) {
+        draft.update { it?.copy(text = value) }
+    }
+
+    fun closeEditor() {
+        draft.value = null
+    }
+
+    suspend fun saveEditor(value: RuleExcludeEditorDraft): Boolean = saveSession.save {
+        saveRuleExclusions(
+            RuleGroupTarget.Global(route.subsItemId, route.groupKey),
+            value.subscription, value.expected, ExcludeData.parse(value.text),
+        )
+    }
+
+    val query: StateFlow<String>
+        field = MutableStateFlow("")
+
+    fun setQuery(value: String) {
+        query.value = value
+    }
+
+    val showSearchBar: StateFlow<Boolean>
+        field = MutableStateFlow(false)
+
+    fun setShowSearchBar(value: Boolean) {
+        showSearchBar.value = value
+    }
+
     private val mutation = MutexState()
     val busyFlow: StateFlow<Boolean> get() = mutation.state
     suspend fun runAction(action: suspend () -> Unit) {
@@ -79,7 +123,6 @@ class SubsGlobalGroupExcludeViewModel(
             listOf(state.subscription), state.configs
         )
 
-    suspend fun applySwitches(request: RuleSwitchRequest, setting: RuleSetting) =
-        RuleGroupConfigService.apply(request, setting)
-
+    suspend fun applySwitches(request: RuleSwitchRequest, setting: RuleSetting, confirmation: String? = null) =
+        applyRuleSwitchWithConfirmation(request, setting, MainViewModel.requireCurrent().dialogRequests, RuleSwitchHost.GlobalRuleApps, confirmation)
 }

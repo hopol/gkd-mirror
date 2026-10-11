@@ -22,58 +22,38 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.action_toast
-import li.gkd.app.resources.action_toast_enable
-import li.gkd.app.resources.action_toast_example_group
-import li.gkd.app.resources.action_toast_example_rule
-import li.gkd.app.resources.action_toast_preview
-import li.gkd.app.resources.action_toast_preview_hint
-import li.gkd.app.resources.action_toast_style_custom
-import li.gkd.app.resources.action_toast_style_hint
-import li.gkd.app.resources.action_toast_style_system
-import li.gkd.app.resources.action_toast_text
-import li.gkd.app.resources.action_toast_variable_count
-import li.gkd.app.resources.action_toast_variable_group
-import li.gkd.app.resources.action_toast_variable_rule
-import li.gkd.app.resources.action_toast_variables
-import li.gkd.app.resources.action_toast_variables_hint
-import li.gkd.app.resources.progress_fraction
-import li.gkd.app.resources.toast_style
-import li.gkd.app.resources.toast_text_input_hint
-import li.gkd.app.resources.update_success
-import li.gkd.app.settings.SettingsRepository
-import li.gkd.app.settings.SettingsRepository.settings
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import li.gkd.app.resources.*
+import li.gkd.app.ui.MainViewModel
 import li.gkd.app.ui.component.GkPageBottomSpace
 import li.gkd.app.ui.component.GkSwitch
 import li.gkd.app.ui.component.GkTemplateVariableRow
-import li.gkd.app.ui.navigation.EditorFrame
+import li.gkd.app.ui.navigation.GkEditor
 import li.gkd.app.ui.page.EditorSession
+import li.gkd.app.ui.platform.UiHost
+import li.gkd.app.ui.platform.hideIme
 import li.gkd.app.ui.text.getSync
 import li.gkd.app.ui.util.ActionToastTemplate
+import li.gkd.app.util.ToastUtils
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun ActionToastPage(
-    showToast: (String) -> Unit,
-    editorFrame: EditorFrame,
-    onPreview: (String, Boolean) -> Unit,
+    host: UiHost,
 ) {
-    val initial = remember { settings.value }
+    val mainVm = MainViewModel.requireCurrent()
+    val vm = viewModel { ActionToastViewModel() }
 
-    var enabled by rememberSaveable { mutableStateOf(initial.toastWhenClick) }
-    var systemStyle by rememberSaveable { mutableStateOf(initial.useSystemToast) }
-    var text by rememberSaveable { mutableStateOf(initial.actionToast) }
+    val enabled by vm.enabled.collectAsStateWithLifecycle()
+    val systemStyle by vm.systemStyle.collectAsStateWithLifecycle()
+    val text by vm.text.collectAsStateWithLifecycle()
     val previewText =
         ActionToastTemplate.render(
             text,
@@ -82,22 +62,20 @@ fun ActionToastPage(
             3L,
         )
 
-    editorFrame(
+    GkEditor(
         EditorSession(
             title = stringResource(Res.string.action_toast),
-            hasChanges = {
-                enabled != initial.toastWhenClick ||
-                    systemStyle != initial.useSystemToast ||
-                    text != initial.actionToast
-            },
+            hasChanges = vm::hasChanges,
             saveEnabled = text.isNotEmpty() && text.length <= 64,
             onSave = {
-                if (SettingsRepository.saveActionToast(enabled, systemStyle, text)) {
-                    showToast(Res.string.update_success.getSync())
+                if (vm.save()) {
+                    ToastUtils.show(Res.string.update_success.getSync())
                 }
             },
         ),
-        null,
+        navigator = mainVm.navigator,
+        hideIme = host::hideIme,
+        scope = mainVm.scope,
     ) { padding ->
         Column(
             modifier =
@@ -120,7 +98,7 @@ fun ActionToastPage(
                             .toggleable(
                                 value = enabled,
                                 role = Role.Switch,
-                                onValueChange = { enabled = it },
+                                onValueChange = { vm.setEnabled(it) },
                             )
                             .padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -143,15 +121,15 @@ fun ActionToastPage(
                         stringResource(Res.string.action_toast_style_custom),
                         !systemStyle,
                     ) {
-                        systemStyle = false
-                        onPreview(previewText, false)
+                        vm.setSystemStyle(false)
+                        previewActionToast(previewText, false)
                     }
                     ActionToastStyleOption(
                         stringResource(Res.string.action_toast_style_system),
                         systemStyle,
                     ) {
-                        systemStyle = true
-                        onPreview(previewText, true)
+                        vm.setSystemStyle(true)
+                        previewActionToast(previewText, true)
                     }
                 }
                 Text(
@@ -162,7 +140,7 @@ fun ActionToastPage(
             }
             OutlinedTextField(
                 value = text,
-                onValueChange = { text = it.take(64) },
+                onValueChange = { vm.setText(it.take(64)) },
                 label = { Text(stringResource(Res.string.action_toast_text)) },
                 placeholder = { Text(stringResource(Res.string.toast_text_input_hint)) },
                 minLines = 2,

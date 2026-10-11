@@ -1,9 +1,12 @@
 package li.gkd.app
 
 import androidx.lifecycle.ViewModelStore
+import androidx.compose.runtime.snapshots.Snapshot
 import java.io.File
 import java.io.IOException
+import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
@@ -12,8 +15,11 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -22,6 +28,7 @@ import li.gkd.app.crash.assertCrashReports
 import li.gkd.app.model.AppInfo
 import li.gkd.app.model.AppInventory
 import li.gkd.app.network.assertInspectionProtocol
+import li.gkd.app.resources.*
 import li.gkd.app.settings.SettingsRepository
 import li.gkd.app.settings.SettingsRepositoryChecks
 import li.gkd.app.state.Loadable
@@ -31,10 +38,26 @@ import li.gkd.app.storage.appStorage
 import li.gkd.app.subscription.RawSubscription
 import li.gkd.app.subscription.SubscriptionJson
 import li.gkd.app.subscription.SubscriptionRepository
+import li.gkd.app.ui.MainViewModel
+import li.gkd.app.ui.component.ToastState
+import li.gkd.app.ui.home.BottomNavItem
+import li.gkd.app.ui.home.HomeState
 import li.gkd.app.ui.home.HomeViewModel
+import li.gkd.app.ui.navigation.AboutRoute
+import li.gkd.app.ui.navigation.ActionLogRoute
+import li.gkd.app.ui.navigation.AppConfigRoute
+import li.gkd.app.ui.navigation.HomeRoute
+import li.gkd.app.ui.navigation.SnapshotPageRoute
+import li.gkd.app.ui.subscription.AppConfigViewModel
+import li.gkd.app.ui.subscription.ActionLogViewModel
+import li.gkd.app.ui.update.UpdateStatus
 import li.gkd.app.util.LogUtils
 import li.gkd.db.Db
+import li.gkd.db.ActionLog
+import li.gkd.db.RuleGroupType
+import li.gkd.db.SubsItem
 import li.gkd.db.SubscriptionConfigStore
+import org.jetbrains.compose.resources.getString
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ApplicationIntegrationTest {
@@ -91,30 +114,35 @@ class ApplicationIntegrationTest {
             ).use { runtime ->
                 assertLogCallerValues()
                 withTimeout(20_000) { runtime.subscriptionInitialization.join() }
+                withTimeout(5_000) { runtime.crashInitialization.join() }
                 val items = Db.subsItemDao.queryAll().associateBy { it.id }
                 assertTrue(items.getValue(13).enable)
                 assertFalse(items.getValue(92).enable)
                 assertTrue(appStorage().subscription.resolve("92.json").isFile)
                 assertPlatformInputs(runtime.simulator)
                 assertSubscriptionCreationNames()
+                li.gkd.app.subscription.assertUpdateErrorDismissal(runtime.simulator)
                 assertHomeLifecycle()
+                assertActionLogSubscriptionLoadFailure()
+                assertRootNavigationLifecycle(runtime)
                 assertAppRuleParentVisibility()
                 SettingsRepositoryChecks.run(appStorage().store, profile.appName)
                 li.gkd.app.network.assertUpdateClient(session.resolve("update-client"))
-                assertIgnoredVersionsRetry()
+                assertIgnoredVersionsRetry(runtime.toast)
                 assertCrashReports()
                 assertCookiePersistence(appStorage().privateStore)
                 li.gkd.app.rule.RuleSwitchPolicyTest()
                     .requestRejectsChangedSwitchesButAcceptsConcurrentPageAndOtherAppEdits()
                 li.gkd.app.snapshot.SnapshotCaptureRepositoryTest(appStorage()).runAll()
                 li.gkd.app.snapshot.SnapshotStoreTest(appStorage()).runAll()
+                li.gkd.app.snapshot.assertSnapshotSharing(appStorage())
                 DesktopAppCatalogTest().profileReloadUsesSharedSelectionAndRecoversFromCorruptFile(
                     profileDir
                 )
                 li.gkd.app.record.assertRuntimeRecords(appStorage().database)
                 li.gkd.app.storage.LogArchiveChecks().apply {
-                    archiveContainsHostMaterialsAndProductionLogsAndCleansStaging()
-                    materialFailurePreservesCauseAndCleansAlreadyWrittenFiles()
+                    archiveContainsMaterialsAndExpiredCacheIsCleanedByMaintenance()
+                    materialFailurePreservesCauseAndLeavesFilesForCacheMaintenance()
                 }
                 assertBackupRoundTrip(appStorage())
             }
@@ -134,6 +162,7 @@ class ApplicationIntegrationTest {
     private suspend fun assertPlatformInputs(simulator: SimulatorStore) {
         val previous = simulator.settings.value
         try {
+            val beforeOfflineRefresh = SubscriptionRepository.snapshotFlow.value
             // The repository uses the active host's current network state on every operation.
             assertEquals(
                 li.gkd.app.subscription.SubscriptionResult.Failure(
@@ -141,6 +170,8 @@ class ApplicationIntegrationTest {
                 ),
                 SubscriptionRepository.refresh(),
             )
+            // An offline preflight must not replace subscription data or update errors.
+            assertEquals(beforeOfflineRefresh, SubscriptionRepository.snapshotFlow.value)
             simulator.update { it.copy(device = it.device.copy(wifi = true)) }
             // These imported subscriptions have no update URL: success requires no external network.
             assertTrue(SubscriptionRepository.refresh() is li.gkd.app.subscription.SubscriptionResult.Success)
@@ -207,38 +238,52 @@ class ApplicationIntegrationTest {
         assertEquals("Fresh local", SubscriptionRepository.awaitSnapshot().subscriptions.getValue(localId).name)
     }
 
-    private suspend fun assertIgnoredVersionsRetry() = kotlinx.coroutines.coroutineScope {
+    private suspend fun assertIgnoredVersionsRetry(toast: ToastState) = kotlinx.coroutines.coroutineScope {
         val file = appStorage().store.resolve("ignore_version_list.json")
         val previous = file.takeIf { it.exists() }?.readBytes()
-        val messages = mutableListOf<String>()
-        var networkChecks = 0
+        val initialRevision = toast.revision
+        assertFalse(li.gkd.app.network.isNetworkAvailable())
+        val networkUnavailable = getString(Res.string.network_unavailable)
+        // This headless runtime has no composition to dispatch global snapshot changes.
+        val snapshotChanges = Channel<Unit>(Channel.CONFLATED)
+        val observer = Snapshot.registerGlobalWriteObserver { snapshotChanges.trySend(Unit) }
+        val notificationJob = launch(Dispatchers.Main) {
+            for (change in snapshotChanges) Snapshot.sendApplyNotifications()
+        }
         try {
             file.writeText("invalid-json")
-            val update = li.gkd.app.ui.update.UpdateStatus(
-                this, 1, "test", messages::add,
-                networkAvailable = { networkChecks++; false },
+            val update = UpdateStatus(
+                this, 1, "test",
             )
             suspend fun checkManually() {
+                val previousRevision = toast.revision
                 update.checkUpdate(manual = true)
                 withTimeout(5_000) { update.checkUpdatingFlow.first { !it } }
+                withTimeout(5_000) {
+                    androidx.compose.runtime.snapshotFlow { toast.revision }.first { it > previousRevision }
+                }
             }
             checkManually()
-            assertEquals(0, networkChecks)
-            assertEquals(1, messages.size)
+            assertEquals(initialRevision + 1, toast.revision)
+            assertTrue(toast.message != networkUnavailable)
             assertEquals("invalid-json", file.readText())
             file.delete()
             check(file.mkdir()) // A read failure must not be treated as an empty ignore list either.
             checkManually()
-            assertEquals(0, networkChecks)
-            assertEquals(2, messages.size)
+            assertEquals(initialRevision + 2, toast.revision)
+            assertTrue(toast.message != networkUnavailable)
             assertTrue(file.isDirectory)
             check(file.delete())
             file.writeText("[10,20]")
             checkManually()
-            assertEquals(1, networkChecks) // The same workflow retries the repaired file.
+            // The repaired file lets the same workflow reach the real platform network check.
+            assertEquals(networkUnavailable, toast.message)
             assertEquals("[10,20]", file.readText())
-            assertEquals(3, messages.size)
+            assertEquals(initialRevision + 3, toast.revision)
         } finally {
+            observer.dispose()
+            snapshotChanges.close()
+            notificationJob.cancel()
             if (file.isDirectory) check(file.delete())
             if (previous == null) file.delete() else file.writeBytes(previous)
         }
@@ -298,8 +343,8 @@ class ApplicationIntegrationTest {
                 subscription,
                 li.gkd.db.SubsItem(id, order = 0, enable = true)
             )
-            val vm = li.gkd.app.ui.subscription.AppConfigViewModel(
-                li.gkd.app.ui.navigation.AppConfigRoute("test.alpha")
+            val vm = AppConfigViewModel(
+                AppConfigRoute("test.alpha")
             ).also { owner.put("app-rules", it) }
 
             suspend fun expectGroups(vararg keys: Int) {
@@ -336,6 +381,87 @@ class ApplicationIntegrationTest {
             owner.clear()
             SettingsRepository.updateSettings { it.copy(showDisabledRule = originalShowDisabled) }
             SettingsRepository.awaitPersistence()
+            SubscriptionRepository.delete(id)
+        }
+    }
+
+    // Scenario reload replaces page state but must retain root tasks; closing the host cancels them.
+    private suspend fun assertRootNavigationLifecycle(runtime: DesktopRuntime) =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+            assertFailsWith<IllegalStateException> { MainViewModel.requireCurrent() }
+            val state = DesktopState(runtime.toast, isolated = true, simulator = runtime.simulator)
+            val vm = state.mainVm
+            val rootJob = vm.scope.coroutineContext[kotlinx.coroutines.Job]!!
+            try {
+                kotlin.test.assertSame(vm, MainViewModel.requireCurrent())
+                // Rebinding the same retained root must not create or replace its instance.
+                vm.registerCurrent()
+                kotlin.test.assertSame(vm, MainViewModel.requireCurrent())
+                val retrieved = androidx.lifecycle.ViewModelProvider.create(state)[MainViewModel::class]
+                kotlin.test.assertSame(vm, retrieved)
+                vm.navigator.navigate(AboutRoute)
+                vm.navigator.navigate(SnapshotPageRoute, replaced = true)
+                assertEquals(listOf(HomeRoute, SnapshotPageRoute), vm.navigator.backStack.map { it.route })
+                vm.navigator.pop()
+                assertEquals(HomeRoute, vm.navigator.topRoute)
+                val previousHome = HomeState()
+                vm.homeNavigation.bind(previousHome)
+                state.load(ScenarioRequest("settings"))
+                vm.homeNavigation.unbind(previousHome)
+                val nextHome = HomeState()
+                vm.homeNavigation.bind(nextHome)
+                assertEquals(BottomNavItem.Settings, nextHome.selectedTab.value)
+                kotlin.test.assertSame(vm, state.mainVm)
+                kotlin.test.assertSame(vm, MainViewModel.requireCurrent())
+                assertTrue(rootJob.isActive)
+                vm.homeNavigation.unbind(nextHome)
+            } finally {
+                state.close()
+            }
+            assertTrue(rootJob.isCancelled)
+            assertFailsWith<IllegalStateException> { MainViewModel.requireCurrent() }
+        }
+
+    /** A corrupt subscription must show a load failure, while an absent one is confirmed missing. */
+    private suspend fun assertActionLogSubscriptionLoadFailure() {
+        val id = -900003L
+        val owner = ViewModelStore()
+        try {
+            SubscriptionRepository.files.restore(id, "invalid-json".toByteArray())
+            Db.subsItemDao.upsert(SubsItem(id = id, order = 102))
+            SubscriptionRepository.refresh(id)
+            val failure = SubscriptionRepository.awaitSnapshot().loadErrors.getValue(id)
+            val vm = ActionLogViewModel(ActionLogRoute()).also { owner.put("action-log", it) }
+            val log = ActionLog(
+                ctime = 0,
+                appId = "test.alpha",
+                subsId = id,
+                subsVersion = 1,
+                groupKey = 1,
+                groupType = RuleGroupType.App,
+                ruleIndex = 0,
+            )
+            vm.showActionLog(log)
+            val failed = withTimeout(5_000) {
+                vm.dialogStateFlow.first { it?.loadState is Loadable.Failure }
+            }!!
+            assertTrue((failed.loadState as Loadable.Failure).cause === failure)
+            assertEquals(null, failed.subscription)
+
+            vm.showActionLog(log.copy(subsId = id - 1))
+            val missing = withTimeout(5_000) {
+                vm.dialogStateFlow.first { it?.actionLog?.subsId == id - 1 && it.loadState is Loadable.Ready }
+            }!!
+            assertEquals(null, missing.subscription)
+            assertEquals(null, missing.group)
+
+            vm.showActionLog(log.copy(subsId = 13))
+            val ready = withTimeout(5_000) {
+                vm.dialogStateFlow.first { it?.actionLog?.subsId == 13L && it.loadState is Loadable.Ready }
+            }!!
+            assertNotNull(ready.subscription)
+        } finally {
+            owner.clear()
             SubscriptionRepository.delete(id)
         }
     }
@@ -405,6 +531,25 @@ class ApplicationIntegrationTest {
         )
         assertFailsWith<CancellationException> {
             manager.importData { throw CancellationException("cancelled selection") }
+        }
+        val malformedArchive = layout.sharedCache.resolve("invalid-subscription-directory.zip")
+        try {
+            ZipOutputStream(malformedArchive.outputStream()).use { zip ->
+                zip.putNextEntry(ZipEntry("subscription"))
+                zip.write("not a directory".toByteArray())
+                zip.closeEntry()
+            }
+            assertFailsWith<IOException> {
+                manager.importData(FileSource.Local(malformedArchive))
+            }
+            assertEquals(
+                SubscriptionJson.json.encodeToString(original),
+                SubscriptionJson.json.encodeToString(
+                    repository.awaitSnapshot().subscriptions.getValue(-2)
+                ),
+            )
+        } finally {
+            malformedArchive.delete()
         }
         assertEquals("later", settings.settings.value.actionToast)
         manager.importData(FileSource.Uri(archive.toURI().toString()))

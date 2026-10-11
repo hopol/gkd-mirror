@@ -1,7 +1,7 @@
 package li.gkd.app.ui.snapshot
 
 import li.gkd.app.snapshot.SnapshotStore
-import li.gkd.app.ui.navigation.AppWindow
+import li.gkd.app.ui.platform.UiHost
 import li.gkd.db.Snapshot
 
 data class SnapshotImage(val path: String, val modifiedAt: Long, val exists: Boolean)
@@ -9,7 +9,8 @@ data class SnapshotImage(val path: String, val modifiedAt: Long, val exists: Boo
 /** Native file and permission operations; snapshot business workflows stay in commonMain. */
 interface SnapshotPlatformActions {
     suspend fun ensureSavePermission(): Boolean
-    suspend fun share(file: java.io.File): li.gkd.app.platform.PlatformResult<Unit>
+    /** Success means the share chooser was launched, not that the receiver accepted the files. */
+    suspend fun share(files: List<java.io.File>): li.gkd.app.platform.PlatformResult<Unit>
 
     /** Success(false) means the user cancelled the destination picker. */
     suspend fun save(file: java.io.File): li.gkd.app.platform.PlatformResult<Boolean>
@@ -17,7 +18,6 @@ interface SnapshotPlatformActions {
 }
 
 interface SnapshotActions {
-    fun share(snapshot: Snapshot)
     fun saveToDownloads(snapshot: Snapshot)
     fun saveToAlbum(snapshot: Snapshot)
     fun replace(snapshot: Snapshot)
@@ -27,9 +27,8 @@ interface SnapshotActions {
     fun delete(snapshot: Snapshot)
 }
 
-
 fun Snapshot.image(): SnapshotImage = SnapshotStore.screenshotFile(id).let {
     SnapshotImage(it.absolutePath, it.lastModified(), it.isFile)
 }
 
-expect fun AppWindow.snapshotPlatformActions(): SnapshotPlatformActions
+expect fun UiHost.snapshotPlatformActions(): SnapshotPlatformActions

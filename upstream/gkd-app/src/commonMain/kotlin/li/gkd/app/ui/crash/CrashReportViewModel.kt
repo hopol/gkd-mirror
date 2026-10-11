@@ -7,9 +7,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import li.gkd.app.crash.CrashData
 import li.gkd.app.crash.FileCrashStorage
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.crash_report_delete_failed
-import li.gkd.app.resources.crash_reports_delete_partially_failed
+import li.gkd.app.resources.*
 import li.gkd.app.state.Loadable
 import li.gkd.app.ui.state.BaseViewModel
 import org.jetbrains.compose.resources.getString
@@ -17,6 +15,13 @@ import org.jetbrains.compose.resources.getString
 class CrashReportViewModel(
     initialCrashDataList: List<CrashData>,
 ) : BaseViewModel() {
+    val expandedCrashId: StateFlow<Long?>
+        field = MutableStateFlow<Long?>(initialCrashDataList.firstOrNull()?.id)
+
+    fun setExpandedCrashId(value: Long?) {
+        expandedCrashId.value = value
+    }
+
     val crashDataState: StateFlow<Loadable<List<CrashData>>>
         field = MutableStateFlow(
             if (initialCrashDataList.isEmpty()) {
@@ -27,15 +32,7 @@ class CrashReportViewModel(
         )
 
     private val initialLoadJob = scope.launch(Dispatchers.IO) {
-        crashDataState.value = try {
-            Loadable.Ready(FileCrashStorage.load())
-        } catch (e: Exception) {
-            if (initialCrashDataList.isEmpty()) {
-                Loadable.Failure(e)
-            } else {
-                Loadable.Ready(initialCrashDataList)
-            }
-        }
+        crashDataState.value = Loadable.Ready(FileCrashStorage.load())
     }
 
     suspend fun deleteCrash(crashData: CrashData) {
@@ -71,5 +68,4 @@ class CrashReportViewModel(
             withContext(Dispatchers.IO) { FileCrashStorage.load() },
         )
     }
-
 }

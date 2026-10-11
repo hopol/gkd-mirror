@@ -1,13 +1,16 @@
 package li.gkd.app.ui.snapshot
 
 import androidx.compose.runtime.Composable
-import li.gkd.app.ui.navigation.AppWindow
+import li.gkd.app.ui.platform.UiHost
+import li.gkd.app.DesktopRuntime
+import li.gkd.app.SimulatedService
+import li.gkd.app.simulatedServiceRunning
 
 @Composable
-actual fun AppWindow.screenshotServiceRunning() = false
-actual fun AppWindow.nativeScreenshotAvailable() = true
-actual fun AppWindow.setScreenshotServiceEnabled(enabled: Boolean) {
-    state.unsupported()
+actual fun screenshotServiceRunning() = simulatedServiceRunning(SimulatedService.Screenshot)
+actual fun nativeScreenshotAvailable() = false
+actual fun UiHost.setScreenshotServiceEnabled(enabled: Boolean) {
+    DesktopRuntime.requireCurrent().services.setEnabled(SimulatedService.Screenshot, enabled)
 }
 
-actual suspend fun AppWindow.ensureSnapshotSavePermission() = true
+actual suspend fun UiHost.ensureSnapshotSavePermission() = true

@@ -1,6 +1,24 @@
 package li.gkd.app.ui.subscription
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import li.gkd.app.ui.component.GkTriStateSwitch
+import li.gkd.app.ui.icon.ResetSettings
+import li.gkd.app.resources.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,25 +42,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.navigation3.runtime.NavKey
 import li.gkd.app.model.ExcludeData
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.config_loading
-import li.gkd.app.resources.dialog_close
-import li.gkd.app.resources.rule_content
-import li.gkd.app.resources.rule_delete
-import li.gkd.app.resources.rule_edit
-import li.gkd.app.resources.rule_enable
-import li.gkd.app.resources.rule_enable_in_app
-import li.gkd.app.resources.rule_key_description
-import li.gkd.app.resources.rule_pre_keys_description
-import li.gkd.app.resources.rule_source
-import li.gkd.app.resources.rule_view_examples
-import li.gkd.app.resources.rule_view_parent_list
-import li.gkd.app.resources.rule_view_source
-import li.gkd.app.resources.subscription_settings
 import li.gkd.app.rule.RuleControlState
-import li.gkd.app.rule.RuleGroupTarget
+import li.gkd.app.rule.toRuleGroupTarget
 import li.gkd.app.rule.RuleSetting
 import li.gkd.app.subscription.RawSubscription
 import li.gkd.app.ui.component.GkCopyableText
@@ -59,27 +61,26 @@ import li.gkd.app.ui.component.GkTopAppBar
 import li.gkd.app.ui.component.GkTwoLineText
 import li.gkd.app.ui.component.removeRuleCategoryPrefix
 import li.gkd.app.ui.icon.RuleList
-import li.gkd.app.ui.navigation.AppRoute
-import li.gkd.app.ui.navigation.GkFullscreenDialog
+import li.gkd.app.ui.navigation.AppNavigator
 import li.gkd.app.ui.navigation.ImagePreviewItem
 import li.gkd.app.ui.navigation.ImagePreviewRoute
 import li.gkd.app.ui.navigation.SubsAppGroupListRoute
 import li.gkd.app.ui.navigation.SubsCategoryGroupRoute
 import li.gkd.app.ui.navigation.SubsGlobalGroupListRoute
+import li.gkd.app.ui.platform.GkFullscreenDialog
 import li.gkd.app.ui.share.LocalDarkTheme
 import li.gkd.app.ui.style.JSON5_LARGE_TEXT_THRESHOLD
 import li.gkd.app.ui.style.getJson5AnnotatedString
 import li.gkd.app.ui.style.scaffoldPadding
 import li.gkd.app.ui.text.getSync
+import li.gkd.app.util.copyText
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun GkRuleGroupDialog(
-    onNavigate: (AppRoute) -> Unit,
-    topRoute: () -> NavKey,
+    navigator: AppNavigator,
     openSubscription: (Long) -> Unit,
     ruleControl: RuleControlDialogState,
-    copyText: (String) -> Unit,
     subs: RawSubscription,
     group: RawSubscription.RawGroupProps,
     appId: String?,
@@ -90,11 +91,13 @@ fun GkRuleGroupDialog(
     onClickEditExclude: () -> Unit,
     control: RuleControlState?,
     onSettingChange: (RuleSetting) -> Unit,
+    matchAnyApp: Boolean?,
+    onMatchAnyAppChange: (Boolean?) -> Unit,
     onClickDelete: () -> Unit = {},
     sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
 ) {
     // Keep the header width stable during dismissal after navigating to the list.
-    val sourceRoute = remember { topRoute() }
+    val sourceRoute = remember { navigator.topRoute }
     val category = if (group is RawSubscription.RawAppGroup) {
         subs.getCategory(group.name)?.takeIf { it.name.isNotBlank() }
     } else null
@@ -142,7 +145,7 @@ fun GkRuleGroupDialog(
                     onClick = {
                         val route = SubsCategoryGroupRoute(subs.id, category.key)
                         onDismissRequest()
-                        if (topRoute() != route) onNavigate(route)
+                        navigator.navigate(route)
                     },
                     label = { Text(category.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                     modifier = Modifier.minimumInteractiveComponentSize(),
@@ -171,7 +174,7 @@ fun GkRuleGroupDialog(
                     modifier = Modifier.size(48.dp),
                     onClick = {
                         onDismissRequest()
-                        onNavigate(targetRoute)
+                        navigator.navigate(targetRoute)
                     },
                 )
             }
@@ -200,7 +203,7 @@ fun GkRuleGroupDialog(
                             onClick = {
                                 menu = false
                                 onDismissRequest()
-                                onNavigate(
+                                navigator.navigate(
                                     ImagePreviewRoute(
                                         title = group.name,
                                         items = buildRuleGroupPreviewItems(group)
@@ -232,28 +235,78 @@ fun GkRuleGroupDialog(
                 title = if (group is RawSubscription.RawGlobalGroup && appId != null) stringResource(
                     Res.string.rule_enable_in_app
                 ) else stringResource(Res.string.rule_enable),
-                onViewControl = if (group is RawSubscription.RawAppGroup && appId != null) ({
-                    ruleControl.show(
-                        RuleGroupTarget.App(
-                            subs.id,
-                            appId,
-                            group.key
-                        )
-                    )
-                }) else null
+                onViewControl = {
+                    ruleControl.show(group.toRuleGroupTarget(subs.id, appId))
+                }
             )
+            if (group is RawSubscription.RawGlobalGroup && appId == null) {
+                DefaultAppScopeSetting(group, matchAnyApp, onMatchAnyAppChange)
+            }
             GkRuleExclusionsCard(excludeData, excludeAppId, onClick = onClickEditExclude)
         }
     }
     if (showSource) {
-        RuleSourceDialog(group, copyText, onDismissRequest = { showSource = false })
+        RuleSourceDialog(group, onDismissRequest = { showSource = false })
+    }
+}
+
+
+@Composable
+private fun DefaultAppScopeSetting(
+    group: RawSubscription.RawGlobalGroup,
+    matchAnyApp: Boolean?,
+    onChange: (Boolean?) -> Unit,
+) {
+    val subscriptionDefault = group.matchAnyApp ?: true
+    val checked = matchAnyApp ?: subscriptionDefault
+    val title = stringResource(Res.string.global_rule_default_apps)
+    val description = stringResource(when (matchAnyApp) {
+        true -> Res.string.global_rule_default_apps_enabled
+        false -> Res.string.global_rule_default_apps_disabled
+        null -> when (subscriptionDefault) {
+            true -> Res.string.global_rule_default_apps_follow_enabled
+            false -> Res.string.global_rule_default_apps_follow_disabled
+        }
+    })
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().height(IntrinsicSize.Min).heightIn(min = 64.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = title,
+                modifier = Modifier.weight(1f)
+                    .padding(start = 16.dp, end = 8.dp, top = 16.dp, bottom = 16.dp),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            GkIconButton(
+                imageVector = ResetSettings,
+                contentDescription = stringResource(Res.string.settings_reset_default),
+                enabled = matchAnyApp != null,
+                colors = IconButtonDefaults.iconButtonColors(
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+                onClick = { onChange(null) },
+            )
+            GkTriStateSwitch(
+                checked = checked,
+                onCheckedChange = { onChange(checked != true) },
+                modifier = Modifier.width(84.dp).fillMaxHeight().semantics {
+                    contentDescription = title
+                },
+                stateDescription = description,
+            )
+        }
     }
 }
 
 @Composable
 private fun RuleSourceDialog(
     group: RawSubscription.RawGroupProps,
-    copyText: (String) -> Unit,
     onDismissRequest: () -> Unit,
 ) {
     // Syntax highlighting is only needed after the user opens the source viewer.
@@ -282,7 +335,7 @@ private fun RuleSourceDialog(
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
             if (source.length > JSON5_LARGE_TEXT_THRESHOLD) {
                 GkLazyCopyableText(
-                    onCopy = copyText,
+                    onCopy = ::copyText,
                     text = annotatedText,
                     modifier = textModifier,
                     contentPadding = PaddingValues(16.dp),
@@ -292,7 +345,7 @@ private fun RuleSourceDialog(
                 )
             } else {
                 GkCopyableText(
-                    onCopy = copyText,
+                    onCopy = ::copyText,
                     text = annotatedText,
                     textToCopy = source,
                     modifier = textModifier,

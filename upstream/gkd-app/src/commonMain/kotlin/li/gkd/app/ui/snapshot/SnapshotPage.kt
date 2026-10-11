@@ -74,39 +74,11 @@ import kotlinx.coroutines.launch
 import li.gkd.app.app.ActivityNames.getShowActivityId
 import li.gkd.app.model.date
 import li.gkd.app.network.AppLinks
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.action_delete
-import li.gkd.app.resources.action_save_to_album
-import li.gkd.app.resources.action_save_to_downloads
-import li.gkd.app.resources.action_view
-import li.gkd.app.resources.data_empty
-import li.gkd.app.resources.data_load_failed
-import li.gkd.app.resources.link_copy
-import li.gkd.app.resources.more_label
-import li.gkd.app.resources.selection_mode_enter
-import li.gkd.app.resources.selection_toggle
-import li.gkd.app.resources.snapshot_copy_links_upload_all_confirmation
-import li.gkd.app.resources.snapshot_copy_links_upload_some_confirmation
-import li.gkd.app.resources.snapshot_delete
-import li.gkd.app.resources.snapshot_delete_selected_confirmation
-import li.gkd.app.resources.snapshot_delete_selected_result
-import li.gkd.app.resources.snapshot_generate_link
-import li.gkd.app.resources.snapshot_generate_links_confirmation
-import li.gkd.app.resources.snapshot_records
-import li.gkd.app.resources.snapshot_save_selected_partial
-import li.gkd.app.resources.snapshot_save_selected_success
-import li.gkd.app.resources.snapshot_save_selected_to_album_confirmation
-import li.gkd.app.resources.snapshot_save_selected_to_downloads_confirmation
-import li.gkd.app.resources.snapshot_screenshot_unavailable
-import li.gkd.app.resources.snapshot_upload_privacy_warning
-import li.gkd.app.resources.snapshot_view_switch_to_app
-import li.gkd.app.resources.snapshot_view_switch_to_time
-import li.gkd.app.resources.upload_busy
-import li.gkd.app.resources.value_null
+import li.gkd.app.resources.*
 import li.gkd.app.settings.SettingsRepository
 import li.gkd.app.state.Loadable
 import li.gkd.app.time.format
-import li.gkd.app.ui.component.DialogRequests
+import li.gkd.app.ui.MainViewModel
 import li.gkd.app.ui.component.GkAppNameText
 import li.gkd.app.ui.component.GkBatchActionMenuItem
 import li.gkd.app.ui.component.GkCheckbox
@@ -121,32 +93,33 @@ import li.gkd.app.ui.component.GkRetainedSheet
 import li.gkd.app.ui.component.GkScaffold
 import li.gkd.app.ui.component.SheetRequest
 import li.gkd.app.ui.component.rememberMultiSelectionState
-import li.gkd.app.ui.navigation.AppRoute
-import li.gkd.app.ui.navigation.GkBackHandler
-import li.gkd.app.ui.navigation.SnapshotActionFactory
+import li.gkd.app.ui.image.appImageLoader
 import li.gkd.app.ui.navigation.SnapshotPreviewRoute
-import li.gkd.app.ui.navigation.launchUi
 import li.gkd.app.ui.option.SnapshotDisplayModeOption
 import li.gkd.app.ui.option.findOption
+import li.gkd.app.ui.platform.GkBackHandler
+import li.gkd.app.ui.platform.UiHost
 import li.gkd.app.ui.share.ListPlaceholder
+import li.gkd.app.ui.share.launchUi
 import li.gkd.app.ui.style.scaffoldPadding
+import li.gkd.app.ui.upload.createSnapshotUploadItem
+import li.gkd.app.util.ToastUtils
 import li.gkd.db.Snapshot
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun SnapshotPage(
-    onBack: () -> Unit,
-    onNavigate: (AppRoute) -> Unit,
-    showToast: (String) -> Unit,
-    showText: (String) -> Unit,
-    dialogs: DialogRequests,
-    copyText: (String) -> Unit,
-    imageLoader: ImageLoader,
-    snapshotActions: SnapshotActionFactory,
-    uploadSnapshots: (List<Snapshot>, () -> Unit) -> Boolean?,
+    host: UiHost,
 ) {
+    val mainVm = MainViewModel.requireCurrent()
+    val imageLoader = appImageLoader()
+    fun uploadSnapshots(snapshots: List<Snapshot>, onFinished: () -> Unit) =
+        mainVm.githubUpload.startBatchTask(snapshots.map {
+            createSnapshotUploadItem(it, it.appId + " · " + it.date)
+        }, onFinished)
     val vm = viewModel { SnapshotViewModel() }
+    val shareProgress by vm.shareProgress.collectAsStateWithLifecycle()
 
     val loadableState by vm.uiState.collectAsStateWithLifecycle()
     val settings by SettingsRepository.settings.collectAsStateWithLifecycle()
@@ -164,7 +137,7 @@ fun SnapshotPage(
     val displayedSnapshots = remember(groups) { groups.flatMap { it.snapshots } }
     val previewSnapshotIds = remember(displayedSnapshots) { displayedSnapshots.map { it.id } }
     fun openPreview(snapshotId: Long) {
-        onNavigate(SnapshotPreviewRoute(snapshotId, previewSnapshotIds))
+        mainVm.navigator.navigate(SnapshotPreviewRoute(snapshotId, previewSnapshotIds))
     }
 
     var actionRequest by remember { mutableStateOf<SheetRequest<Long>?>(null) }
@@ -180,18 +153,18 @@ fun SnapshotPage(
         val links = targets.mapNotNull { snapshot ->
             snapshot.githubAssetId?.let { AppLinks.ImportSnapshot + it }
         }
-        if (links.isNotEmpty()) showText(links.joinToString("\n"))
+        if (links.isNotEmpty()) mainVm.textDialog.showText(links.joinToString("\n"))
     }
 
     fun showCurrentLinks(targetIds: List<Long>) {
-        launchUi(vm.scope, showToast) {
+        vm.scope.launchUi {
             val byId = li.gkd.db.Db.snapshotDao.query().first().associateBy { it.id }
             showLinks(targetIds.mapNotNull(byId::get))
         }
     }
 
     fun saveSelected(targets: List<Snapshot>, toAlbum: Boolean) {
-        launchUi(actionScope, showToast) {
+        actionScope.launchUi {
             val title =
                 if (toAlbum) getString(Res.string.action_save_to_album) else getString(Res.string.action_save_to_downloads)
             val confirmation = if (toAlbum) {
@@ -205,19 +178,19 @@ fun SnapshotPage(
                     targets.size.toString()
                 )
             }
-            if (!dialogs.confirm(
+            if (!mainVm.dialogRequests.confirm(
                     title = title,
                     text = confirmation,
                     confirmText = title,
                 )
             ) return@launchUi
-            val actions = snapshotActions(vm, {}, {}, {})
+            val actions = host.snapshotActions(mainVm, vm, {}, {}, {})
             val savedCount = if (toAlbum) {
                 actions.saveSelectedToAlbum(targets)
             } else {
                 actions.saveSelectedToDownloads(targets)
             } ?: return@launchUi
-            showToast(
+            ToastUtils.show(
                 if (savedCount == targets.size) {
                     getString(Res.string.snapshot_save_selected_success, savedCount.toString())
                 } else {
@@ -259,12 +232,17 @@ fun SnapshotPage(
 
     GkScaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        snackbarHost = {
+            shareProgress?.let {
+                GkSnapshotShareProgress(it, vm::cancelShare, host.snapshotShareCornerPadding())
+            }
+        },
         topBar = {
             GkMultiSelectionTopAppBar(
                 selectedMode = selectionState.active,
                 selectedCount = selectedIds.size,
                 onExitSelection = selectionState::clear,
-                onNavigateBack = onBack,
+                onNavigateBack = mainVm.navigator::pop,
                 onTitleClick = resetScroll,
                 scrollBehavior = scrollBehavior,
                 title = { Text(stringResource(Res.string.snapshot_records)) },
@@ -275,6 +253,14 @@ fun SnapshotPage(
                             keys = allIds,
                             enabled = loadableState is Loadable.Ready,
                         ) { dismiss ->
+                            GkBatchActionMenuItem(
+                                text = stringResource(Res.string.snapshot_share),
+                                enabled = selectedSnapshots.isNotEmpty() && shareProgress == null,
+                                onDismiss = dismiss,
+                                onClick = {
+                                    vm.shareSnapshots(selectedSnapshots, host.snapshotPlatformActions())
+                                },
+                            )
                             GkBatchActionMenuItem(
                                 text = stringResource(Res.string.action_save_to_downloads),
                                 enabled = selectedSnapshots.isNotEmpty(),
@@ -294,8 +280,8 @@ fun SnapshotPage(
                                     onDismiss = dismiss,
                                     onClick = {
                                         val targets = pendingUploads
-                                        launchUi(actionScope, showToast) {
-                                            if (!dialogs.confirm(
+                                        actionScope.launchUi {
+                                            if (!mainVm.dialogRequests.confirm(
                                                     title = getString(Res.string.snapshot_generate_link),
                                                     text = getString(
                                                         Res.string.snapshot_generate_links_confirmation,
@@ -308,7 +294,7 @@ fun SnapshotPage(
                                             if (uploadSnapshots(targets, {}) == true) {
                                                 selectionState.clear()
                                             } else {
-                                                showToast(getString(Res.string.upload_busy))
+                                                ToastUtils.show(getString(Res.string.upload_busy))
                                             }
                                         }
                                     },
@@ -325,8 +311,8 @@ fun SnapshotPage(
                                     if (pending.isEmpty()) {
                                         showLinks(targets)
                                     } else {
-                                        launchUi(actionScope, showToast) {
-                                            val upload = dialogs.confirm(
+                                        actionScope.launchUi {
+                                            val upload = mainVm.dialogRequests.confirm(
                                                 title = getString(Res.string.link_copy),
                                                 text = (if (pending.size == targets.size) {
                                                     getString(
@@ -348,7 +334,7 @@ fun SnapshotPage(
                                                 ) {
                                                     selectionState.clear()
                                                 } else {
-                                                    showToast(getString(Res.string.upload_busy))
+                                                    ToastUtils.show(getString(Res.string.upload_busy))
                                                 }
                                             } else if (pending.size < targets.size) {
                                                 showLinks(targets)
@@ -363,8 +349,8 @@ fun SnapshotPage(
                                 onDismiss = dismiss,
                                 onClick = {
                                     val targets = selectedSnapshots
-                                    launchUi(actionScope, showToast) {
-                                        if (!dialogs.confirm(
+                                    actionScope.launchUi {
+                                        if (!mainVm.dialogRequests.confirm(
                                                 title = getString(Res.string.snapshot_delete),
                                                 text = getString(
                                                     Res.string.snapshot_delete_selected_confirmation,
@@ -375,7 +361,7 @@ fun SnapshotPage(
                                         ) return@launchUi
                                         val result = vm.deleteSnapshots(targets)
                                         selectionState.removeDeleted(result.deletedIds)
-                                        showToast(
+                                        ToastUtils.show(
                                             getString(
                                                 Res.string.snapshot_delete_selected_result,
                                                 result.deletedIds.size.toString(),
@@ -397,6 +383,7 @@ fun SnapshotPage(
                                 SnapshotDisplayModeOption.ByTime -> GkIcons.CalendarMonth
                                 SnapshotDisplayModeOption.ByApp -> GkIcons.Apps
                             },
+                            animateMorph = true,
                             modifier = Modifier.semantics { stateDescription = displayModeLabel },
                             contentDescription = when (nextMode) {
                                 SnapshotDisplayModeOption.ByTime -> stringResource(Res.string.snapshot_view_switch_to_time)
@@ -496,17 +483,18 @@ fun SnapshotPage(
         },
     ) { _, snapshot, sheetState, dismiss ->
         val actions =
-            snapshotActions(
+            host.snapshotActions(mainVm,
                 vm,
                 { id -> thumbnailVersions[id] = (thumbnailVersions[id] ?: 0) + 1 },
                 {},
                 {})
         GkSnapshotActionsSheet(
-            copyText, imageLoader, snapshot = snapshot,
+            imageLoader, snapshot = snapshot,
             appName = appNames[snapshot.appId] ?: snapshot.appId,
             sheetState = sheetState,
             onDismissRequest = dismiss,
-            onShare = { actions.share(snapshot) },
+            onShare = { vm.shareSnapshots(listOf(snapshot), host.snapshotPlatformActions()) },
+            shareEnabled = shareProgress == null,
             onSaveToDownloads = { actions.saveToDownloads(snapshot) },
             onUpload = { actions.upload(snapshot) },
             onSaveToAlbum = { actions.saveToAlbum(snapshot) },
@@ -694,7 +682,7 @@ private fun SnapshotCard(
                     enableUserInput = false,
                 ) {
                     GkFixedTimeText(
-                        text = snapshot.id.format("HH:mm"),
+                        text = snapshot.id.format("HH:mm:ss"),
                         modifier = (if (selectedMode) Modifier else Modifier.clickable {
                             timeTooltipScope.launch { timeTooltipState.show() }
                         }).semantics { contentDescription = fullTime },
@@ -703,7 +691,7 @@ private fun SnapshotCard(
                 }
             } else {
                 GkFixedTimeText(
-                    text = snapshot.date,
+                    text = fullTime,
                     modifier = Modifier.semantics { contentDescription = fullTime },
                     style = MaterialTheme.typography.labelSmall,
                 )

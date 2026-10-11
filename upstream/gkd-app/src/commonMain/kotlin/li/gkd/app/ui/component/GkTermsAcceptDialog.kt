@@ -7,8 +7,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.LinkAnnotation
@@ -20,17 +20,7 @@ import androidx.compose.ui.text.withLink
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import li.gkd.app.network.AppLinks
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.a11y_about
-import li.gkd.app.resources.a11y_usage_description
-import li.gkd.app.resources.action_agree
-import li.gkd.app.resources.action_disagree
-import li.gkd.app.resources.privacy_policy
-import li.gkd.app.resources.terms_accept_conjunction
-import li.gkd.app.resources.terms_accept_prefix
-import li.gkd.app.resources.terms_accept_suffix
-import li.gkd.app.resources.terms_notice
-import li.gkd.app.resources.user_agreement
+import li.gkd.app.resources.*
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
@@ -39,7 +29,7 @@ fun GkTermsAcceptDialog(
     onError: (Exception) -> Unit,
     onDisagree: () -> Unit,
 ) {
-    var step by rememberSaveable { mutableIntStateOf(0) }
+    var step by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     val onAgree: () -> Unit = {
         if (step == 0) step = 1

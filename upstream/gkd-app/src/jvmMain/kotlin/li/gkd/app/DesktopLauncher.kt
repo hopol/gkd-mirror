@@ -41,19 +41,17 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.awt.Frame
+import java.awt.KeyEventDispatcher
+import java.awt.KeyboardFocusManager
+import java.awt.event.KeyEvent
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.action_toast
-import li.gkd.app.resources.action_toast_enable
-import li.gkd.app.resources.notification_text
-import li.gkd.app.resources.settings_title
-import li.gkd.app.resources.webview_shutdown_pending
+import li.gkd.app.resources.*
 import li.gkd.app.settings.SettingsRepository
 import li.gkd.app.ui.component.GkEmptyState
 import li.gkd.app.ui.component.GkIcon
@@ -67,24 +65,23 @@ import li.gkd.app.ui.component.GkTopAppBar
 import li.gkd.app.ui.component.GkTriStateSwitch
 import li.gkd.app.ui.component.LocalOverlayBackHandler
 import li.gkd.app.ui.icon.Logo
+import li.gkd.app.ui.navigation.GkAppNavigation
 import li.gkd.app.ui.share.LocalDarkTheme
 import li.gkd.app.ui.share.LocalIsTalkbackEnabled
 import li.gkd.app.ui.theme.GkTheme
 import li.gkd.app.ui.theme.rememberAppearance
+import li.gkd.app.util.copyText
 import li.gkd.app.window.DesktopWindowGeometry
 import li.gkd.app.window.GkDesktopWindowFrame
 import li.songe.compose.webview2.WebViewDiagnostics
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
-import java.awt.Frame
-import java.awt.KeyEventDispatcher
-import java.awt.KeyboardFocusManager
-import java.awt.event.KeyEvent
 
 fun runDesktop(args: Array<String>) {
-    require(args.all { it == "--test" }) { "Only --test is supported" }
+    require(args.all { it == "--test" || it == "--focus" }) { "Only --test and --focus are supported" }
     DesktopStorage.initialize("--test" in args)
-    val testWindows = if (DesktopStorage.isolated) DesktopTestWindows.install() else null
+    val backgroundTest = DesktopStorage.isolated && "--focus" !in args
+    val testWindows = if (backgroundTest) DesktopTestWindows.install() else null
     application {
         DisposableEffect(Unit) { onDispose { testWindows?.close() } }
         val windowIcon = rememberVectorPainter(GkIcons.Logo)
@@ -103,20 +100,15 @@ fun runDesktop(args: Array<String>) {
         val runtime =
             remember { DesktopRuntime(simulator) }
         val state =
-            remember { DesktopState(isolated = DesktopStorage.isolated, simulator = simulator) }
-        val tasks = remember { DesktopTasks(state) }
-        var appWindow by remember { mutableStateOf<ComposeWindow?>(null) }
-        val session = remember(state.revision) {
-            DesktopSession(
-                state,
-                runtime,
-                tasks,
-                fileDialogOwner = { requireNotNull(appWindow) }
-            )
+            remember { DesktopState(toast = runtime.toast, isolated = DesktopStorage.isolated, simulator = simulator) }
+        LaunchedEffect(runtime) {
+            runtime.crashInitialization.join()
+            state.mainVm.showCrashReports(runtime.takeCrashDataList())
         }
+        var appWindow by remember { mutableStateOf<ComposeWindow?>(null) }
         val initialSize = remember { simulator.settings.value.device }
         val testPosition =
-            if (DesktopStorage.isolated) WindowPosition.Absolute(
+            if (backgroundTest) WindowPosition.Absolute(
                 (-10000).dp,
                 (-10000).dp
             )
@@ -135,7 +127,7 @@ fun runDesktop(args: Array<String>) {
         val openControls: () -> Unit = {
             controlsWindowState.isMinimized = false
             controlsVisible = true
-            if (!DesktopStorage.isolated) {
+            if (!backgroundTest) {
                 controlsWindow?.let {
                     it.extendedState = it.extendedState and Frame.ICONIFIED.inv()
                     it.toFront()
@@ -169,10 +161,25 @@ fun runDesktop(args: Array<String>) {
                 else -> false
             }
         }
+        val hostKeyHandler by rememberUpdatedState<(Int) -> Boolean>({ key ->
+            when (key) {
+                KeyEvent.VK_F12 -> handleHostKey("F12")
+                KeyEvent.VK_ESCAPE -> handleHostKey("Escape")
+                else -> false
+            }
+        })
+        val session = remember(state.revision) {
+            DesktopSession(
+                state,
+                runtime,
+                fileDialogOwner = { requireNotNull(appWindow) },
+                browsersRunning = { closeAttempt == 0 },
+                onBrowserKey = { hostKeyHandler(it) },
+            )
+        }
         var renderedRevision by remember { mutableStateOf(-1) }
         var appFrameClock by remember { mutableStateOf<MonotonicFrameClock?>(null) }
-        DisposableEffect(session) { onDispose { session.scope.coroutineContext[Job]?.cancel() } }
-        DisposableEffect(Unit) { onDispose { persistence.close(); tasks.close(); state.close(); runtime.close() } }
+        DisposableEffect(Unit) { onDispose { persistence.close(); state.close(); runtime.close() } }
         DisposableEffect(appWindow) {
             val host = appWindow
             val server = host?.let {
@@ -197,7 +204,7 @@ fun runDesktop(args: Array<String>) {
                 state = controlsWindowState,
                 visible = controlsReady,
                 icon = windowIcon,
-                focusable = !DesktopStorage.isolated
+                focusable = !backgroundTest
             ) {
                 SideEffect { controlsWindow = window }
                 DisposableEffect(window) { onDispose { controlsWindow = null } }
@@ -231,7 +238,7 @@ fun runDesktop(args: Array<String>) {
             state = windowState,
             visible = appReady,
             icon = windowIcon,
-            focusable = !DesktopStorage.isolated
+            focusable = !backgroundTest
         ) {
             LaunchedEffect(closeAttempt) {
                 if (closing) {
@@ -259,13 +266,6 @@ fun runDesktop(args: Array<String>) {
             val darkTheme = appearance.isDark(size.dark)
             val scope = rememberCoroutineScope()
             val platformDensity = LocalDensity.current.density
-            val hostKeyHandler by rememberUpdatedState<(Int) -> Boolean>({ key ->
-                when (key) {
-                    KeyEvent.VK_F12 -> handleHostKey("F12")
-                    KeyEvent.VK_ESCAPE -> handleHostKey("Escape")
-                    else -> false
-                }
-            })
             DisposableEffect(window) {
                 val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
                 val backKeys = KeyEventDispatcher { event ->
@@ -309,6 +309,7 @@ fun runDesktop(args: Array<String>) {
                     onReady = { appReady = true }, onOpenControls = openControls
                 ) {
                     CompositionLocalProvider(
+                        androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner provides state,
                         LocalDensity provides Density(
                             platformDensity * size.density,
                             size.fontScale
@@ -329,7 +330,7 @@ fun runDesktop(args: Array<String>) {
                                     onRecents = state::unsupported,
                                 ) {
                                     key(session.revision) {
-                                        DesktopContent(session, !closing) { hostKeyHandler(it) }
+                                        DesktopContent(session)
                                         // Window content and application sessions recompose independently.
                                         // Acknowledge the session actually rendered, not the latest requested revision.
                                         val revision = session.revision
@@ -351,25 +352,17 @@ fun runDesktop(args: Array<String>) {
                                         )
                                     } else {
                                         DesktopOverlays(state, session)
-                                        session.dialogs.Render()
-                                        session.textDialog.Render()
-                                        session.links.Render()
-                                        session.subsSheet.Render()
-                                        session.rules.Render(
-                                            onNavigate = { state.navigate(it) },
-                                            showToast = state.toast::show,
-                                            topRoute = { state.backStack.last() },
-                                            openSubscription = session.subsSheet::show,
-                                            ruleControl = session.ruleControl,
-                                            confirmDelete = session::confirmDelete,
-                                            copyText = {
-                                                li.gkd.app.ui.navigation.copyText(
-                                                    it,
-                                                    state.toast::show
-                                                )
-                                            },
+                                        session.state.mainVm.dialogRequests.Render()
+                                        session.state.mainVm.textDialog.Render(onCopy = ::copyText)
+                                        session.state.mainVm.subsLinkDialog.Render()
+                                        session.state.mainVm.subsSheet.Render()
+                                        session.state.mainVm.ruleGroupState.Render(
+                                            navigator = state.mainVm.navigator,
+                                            openSubscription = session.state.mainVm.subsSheet::show,
+                                            ruleControl = session.state.mainVm.ruleControlDialog,
+                                            confirmDelete = session.state.mainVm::confirmDelete,
                                         )
-                                        session.ruleControl.Render()
+                                        session.state.mainVm.ruleControlDialog.Render()
                                     }
                                     GkToastHost(state.toast, overlayHost = { toastContent ->
                                         Popup(
@@ -391,43 +384,17 @@ fun runDesktop(args: Array<String>) {
 }
 
 @Composable
-private fun DesktopContent(session: DesktopSession, running: Boolean, onBrowserKey: (Int) -> Unit) {
+private fun DesktopContent(session: DesktopSession) {
     val state = session.state
-    val browsersRunning by rememberUpdatedState(running)
-    val browserKey by rememberUpdatedState(onBrowserKey)
-    GkDesktopBackHandler { state.popPage() }
-    li.gkd.app.ui.navigation.GkAppNavigation(
-        homeNavigation = state.homeNavigation,
-        subsSheet = session.subsSheet,
-        subsLinks = session.links,
-        backStack = state.backStack,
-        onBack = state::popPage,
-        window = session,
-        onNavigate = { state.navigate(it) },
-        replaceRoute = { state.navigate(it, true) },
-        showToast = state.toast::show,
-        showText = session.textDialog::showText,
-        topRoute = { state.backStack.last() },
-        updateStatus = session.updateStatus,
-        onExportLogs = { session.showShareLogs = true },
-        takeCrashDataList = { emptyList() },
-        dialogs = session.dialogs,
-        ruleGroups = session.rules,
-        githubUpload = session.githubUpload,
-        confirmDelete = session::confirmDelete,
-        scope = session.scope,
-        browsersRunning = { browsersRunning },
-        onBrowserKey = { browserKey(it) },
-        entryContainer = { route, content ->
-            CompositionLocalProvider(LocalDesktopRouteActive provides (state.backStack.last() == route)) { content() }
-        },
-        diagnosticContent = { route ->
-            check(routeName(route) == "components") { "Unknown diagnostic route: $route" }
-            ComponentCatalog(state)
-        },
-    )
+    GkDesktopBackHandler {
+        if (state.showingComponentCatalog) state.closeComponentCatalog() else state.mainVm.navigator.pop()
+    }
+    if (state.showingComponentCatalog) {
+        ComponentCatalog(state)
+        return
+    }
+    GkAppNavigation(session)
 }
-
 
 @Composable
 private fun ComponentCatalog(state: DesktopState) {

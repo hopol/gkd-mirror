@@ -1,30 +1,43 @@
 package li.gkd.app.ui.subscription
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TooltipAnchorPosition
 import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -34,33 +47,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.action_reload
-import li.gkd.app.resources.app_rules
-import li.gkd.app.resources.app_rules_view_list
-import li.gkd.app.resources.delete_named_confirmation
-import li.gkd.app.resources.file_load_failed_or_missing
-import li.gkd.app.resources.global_rules
-import li.gkd.app.resources.global_rules_view_list
-import li.gkd.app.resources.none_available
-import li.gkd.app.resources.rule_categories
-import li.gkd.app.resources.rule_categories_view_list
-import li.gkd.app.resources.subscription_apps_rules_count
-import li.gkd.app.resources.subscription_categories_count
-import li.gkd.app.resources.subscription_delete
-import li.gkd.app.resources.subscription_global_rules_count
-import li.gkd.app.resources.subscription_id_description
-import li.gkd.app.resources.subscription_link
-import li.gkd.app.resources.subscription_link_edit
-import li.gkd.app.resources.subscription_link_view
-import li.gkd.app.resources.subscription_metadata_description
-import li.gkd.app.resources.subscription_refresh_wait_compact
-import li.gkd.app.resources.unknown
-import li.gkd.app.resources.update_time_description
-import li.gkd.app.resources.version_prefixed
+import li.gkd.app.resources.*
 import li.gkd.app.state.Loadable
 import li.gkd.app.subscription.RawSubscription
 import li.gkd.app.subscription.SubscriptionRepository
@@ -74,7 +63,10 @@ import li.gkd.app.ui.component.GkPageBottomSpaceDefaults
 import li.gkd.app.ui.component.GkRetainedSheet
 import li.gkd.app.ui.component.SheetRequest
 import li.gkd.app.ui.navigation.ActionLogRoute
-import li.gkd.app.ui.navigation.AppRoute
+import li.gkd.app.ui.navigation.AppNavigator
+import li.gkd.app.ui.navigation.ConfirmDeletion
+import li.gkd.app.ui.settings.appVersion
+import li.gkd.app.ui.share.launchUi
 import li.gkd.app.ui.navigation.SubsAppListRoute
 import li.gkd.app.ui.navigation.SubsCategoryRoute
 import li.gkd.app.ui.navigation.SubsGlobalGroupListRoute
@@ -82,7 +74,8 @@ import li.gkd.app.ui.share.DeletionTarget
 import li.gkd.app.ui.style.itemHorizontalPadding
 import li.gkd.app.ui.text.formatTimeAgo
 import li.gkd.app.ui.text.getSync
-import li.gkd.app.ui.text.subscriptionMessage
+import li.gkd.app.ui.text.subscriptionMessageResource
+import li.gkd.app.util.ToastUtils
 import li.gkd.db.Db
 import li.gkd.db.LOCAL_SUBS_ID
 import li.gkd.db.SubsItem
@@ -92,19 +85,15 @@ private data class SubsSheetSnapshot(
     val item: SubsItem,
     val subscription: RawSubscription?,
     val loading: Boolean,
-)
-
-class SubsSheetHost(
-    val appName: String,
-    val navigate: (AppRoute) -> Unit,
-    val openUrl: (String) -> Unit,
-    val requestUrl: suspend (String) -> String?,
-    val toast: (String) -> Unit,
-    val confirmDelete: (String, String, () -> Set<DeletionTarget>, () -> Unit, suspend () -> Unit) -> Unit,
+    val loadError: Exception?,
+    val updateError: Exception?,
 )
 
 class SubsSheetState(
-    private val hostProvider: () -> SubsSheetHost
+    private val navigator: AppNavigator,
+    private val openUrl: (String) -> Unit,
+    private val requestUrl: suspend (String) -> String?,
+    private val confirmDelete: ConfirmDeletion,
 ) {
     private val subsIdFlow = MutableStateFlow<SheetRequest<Long>?>(null)
 
@@ -135,7 +124,9 @@ class SubsSheetState(
             snapshot = if (item != null && subscriptions is Loadable.Ready) SubsSheetSnapshot(
                 item,
                 subscription,
-                loading
+                loading,
+                data?.loadErrors?.get(item.id),
+                data?.updateErrors?.get(item.id),
             ) else null,
             missing = requested != null && subscriptions is Loadable.Ready && subscription == null &&
                     data?.loadErrors?.containsKey(requested?.key) != true && data?.updateErrors?.containsKey(
@@ -145,20 +136,7 @@ class SubsSheetState(
         ) { _, displayed, sheetState, dismiss ->
             val subsItem = displayed.item
             val subscription = displayed.subscription
-            val host = hostProvider()
-
-            val toast = host.toast
             val scope = rememberCoroutineScope()
-            fun launchAction(block: suspend () -> Unit) = scope.launch {
-                try {
-                    block()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    toast(e.subscriptionMessage())
-                }
-            }
-
             val scrollState = rememberScrollState()
             val sheetGesturesEnabled by remember {
                 derivedStateOf { scrollState.value == 0 }
@@ -189,9 +167,51 @@ class SubsSheetState(
                         style = MaterialTheme.typography.titleLarge,
                         modifier = childModifier
                     )
-                    if (subscription != null) {
+                    AnimatedSheetSection(displayed.loadError) { error ->
+                        SubsErrorCard(
+                            title = stringResource(Res.string.subscription_load_failed),
+                            error = error,
+                        ) {
+                            if (displayed.loading) {
+                                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(24.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                }
+                            } else {
+                                GkIconButton(
+                                    imageVector = GkIcons.Autorenew,
+                                    contentDescription = stringResource(Res.string.action_reload),
+                                    onClick = {
+                                        scope.launchUi {
+                                            SubscriptionRepository.refresh(subsItem.id).message()
+                                                ?.let { ToastUtils.show(it) }
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
+                    AnimatedSheetSection(displayed.updateError) { error ->
+                        SubsErrorCard(
+                            title = stringResource(Res.string.subscription_update_failed),
+                            error = error,
+                        ) {
+                            GkIconButton(
+                                imageVector = GkIcons.Close,
+                                contentDescription = stringResource(Res.string.subscription_update_error_dismiss),
+                                onClick = {
+                                    scope.launchUi {
+                                        SubscriptionRepository.dismissUpdateError(subsItem.id, error)
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    AnimatedSheetSection(subscription) { subscription ->
                         val timeStr = formatTimeAgo(subsItem.mtime)
-                        val author = if (subsItem.isLocal) host.appName else subscription.author
+                        val author = if (subsItem.isLocal) appVersion().appName else subscription.author
                             ?: stringResource(Res.string.unknown)
                         val metadataDescription = stringResource(
                             Res.string.subscription_metadata_description,
@@ -211,8 +231,7 @@ class SubsSheetState(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
-                                text = if (subsItem.isLocal) host.appName else subscription.author
-                                    ?: stringResource(Res.string.unknown),
+                                text = author,
                                 modifier = Modifier.weight(1f, fill = false),
                                 style = MaterialTheme.typography.labelMedium,
                                 color = when {
@@ -267,7 +286,7 @@ class SubsSheetState(
                                 onClickLabel = stringResource(Res.string.global_rules_view_list),
                                 onClick = click@{
                                     dismiss()
-                                    host.navigate(SubsGlobalGroupListRoute(subsItem.id))
+                                    navigator.navigate(SubsGlobalGroupListRoute(subsItem.id))
                                 },
                             ) {
                                 Column(
@@ -303,7 +322,7 @@ class SubsSheetState(
                                 onClickLabel = stringResource(Res.string.app_rules_view_list),
                                 onClick = click@{
                                     dismiss()
-                                    host.navigate(SubsAppListRoute(subsItem.id))
+                                    navigator.navigate(SubsAppListRoute(subsItem.id))
                                 },
                             ) {
                                 Column(
@@ -341,7 +360,7 @@ class SubsSheetState(
                                 onClickLabel = stringResource(Res.string.rule_categories_view_list),
                                 onClick = click@{
                                     dismiss()
-                                    host.navigate(SubsCategoryRoute(subsItem.id))
+                                    navigator.navigate(SubsCategoryRoute(subsItem.id))
                                 },
                             ) {
                                 Column(
@@ -372,105 +391,49 @@ class SubsSheetState(
                                 )
                             }
                         }
-                        val updateUrl = subsItem.updateUrl
-                        if (!subsItem.isLocal && updateUrl != null) {
-                            SubsSheetItem(
-                                onClickLabel = stringResource(Res.string.subscription_link_edit),
-                                onClick = click@{
-                                    if (SubscriptionRepository.isBusy) {
-                                        toast(Res.string.subscription_refresh_wait_compact.getSync())
-                                        return@click
-                                    }
-                                    launchAction {
-                                        val url = host.requestUrl(
-                                            updateUrl,
-                                        )
-                                            ?: return@launchAction
-                                        SubscriptionRepository.addOrModifyRemote(url, subsItem)
-                                            .message()
-                                            ?.let {
-                                                toast(it)
-                                            }
-                                    }
-                                },
-                            ) {
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                                ) {
-                                    Text(
-                                        text = stringResource(Res.string.subscription_link),
-                                        style = MaterialTheme.typography.labelLarge,
-                                    )
-                                    Text(
-                                        text = updateUrl,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.secondary,
-                                        softWrap = false,
-                                        overflow = TextOverflow.MiddleEllipsis,
-                                        modifier = Modifier
-                                            .clearAndSetSemantics {}
-                                            .clickable(
-                                                onClickLabel = stringResource(Res.string.subscription_link_view),
-                                                onClick = {
-                                                    host.openUrl(updateUrl)
-                                                })
-                                    )
-                                }
-                                GkIcon(
-                                    imageVector = GkIcons.Edit,
-                                )
-                            }
-                        }
-                    } else {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(150.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            GkPageBottomSpace()
-                            if (displayed.loading) {
-                                CircularProgressIndicator()
-                            } else {
-                                Text(
-                                    text = stringResource(Res.string.file_load_failed_or_missing),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                                TextButton(onClick = click@{
-                                    launchAction {
-                                        SubscriptionRepository.refresh().message()
-                                            ?.let { toast(it) }
-                                    }
-                                }) {
-                                    Text(text = stringResource(Res.string.action_reload))
-                                }
-                            }
-                        }
                     }
 
                     Row(
                         modifier = childModifier,
                         horizontalArrangement = Arrangement.End
                     ) {
+                        val updateUrl = subsItem.updateUrl
+                        if (!subsItem.isLocal && updateUrl != null) {
+                            GkIconButton(
+                                imageVector = GkIcons.LinkDiagonal,
+                                contentDescription = stringResource(Res.string.subscription_link),
+                                onClick = click@{
+                                    scope.launchUi {
+                                        val url = requestUrl(
+                                            updateUrl,
+                                        )
+                                            ?: return@launchUi
+                                        SubscriptionRepository.addOrModifyRemote(url, subsItem.id)
+                                            .message()
+                                            ?.let {
+                                                ToastUtils.show(it)
+                                            }
+                                    }
+                                },
+                            )
+                        }
                         if (!subsItem.isLocal && subscription?.supportUri != null) {
                             GkIconButton(
                                 imageVector = GkIcons.HelpOutline,
                                 onClick = click@{
-                                    host.openUrl(subscription.supportUri)
+                                    openUrl(subscription.supportUri)
                                 },
                             )
                         }
                         GkIconButton(imageVector = GkIcons.History, onClick = click@{
                             dismiss()
-                            host.navigate(ActionLogRoute(subsId = subsItem.id))
+                            navigator.navigate(ActionLogRoute(subsId = subsItem.id))
                         })
                         if (subsItem.id != LOCAL_SUBS_ID) {
                             GkIconButton(
                                 imageVector = GkIcons.Delete,
                                 onClick = click@{
-                                    host.confirmDelete(
+                                    confirmDelete(
                                         Res.string.subscription_delete.getSync(),
                                         Res.string.delete_named_confirmation.getSync(
                                             subscription?.name ?: subsItem.id
@@ -479,7 +442,7 @@ class SubsSheetState(
                                         dismiss,
                                     ) {
                                         val result = SubscriptionRepository.delete(subsItem.id)
-                                        result.message()?.let { toast(it) }
+                                        result.message()?.let { ToastUtils.show(it) }
                                     }
                                 },
                             )
@@ -487,6 +450,63 @@ class SubsSheetState(
                     }
                     GkPageBottomSpace(height = GkPageBottomSpaceDefaults.CompactHeight)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.SubsErrorCard(
+    title: String,
+    error: Exception,
+    action: @Composable () -> Unit,
+) {
+    Spacer(Modifier.height(8.dp))
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = itemHorizontalPadding),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
+                modifier = Modifier.weight(1f).padding(end = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    text = error.subscriptionMessageResource(),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            action()
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+}
+
+@Composable
+private fun <T : Any> AnimatedSheetSection(
+    value: T?,
+    content: @Composable ColumnScope.(T) -> Unit,
+) {
+    var retained by remember { mutableStateOf(value) }
+    if (value != null) {
+        SideEffect { retained = value }
+    }
+    AnimatedVisibility(
+        visible = value != null,
+        enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
+        exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top),
+    ) {
+        val displayed = value ?: retained
+        if (displayed != null) {
+            Column(Modifier.fillMaxWidth()) {
+                content(displayed)
             }
         }
     }

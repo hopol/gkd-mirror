@@ -9,15 +9,13 @@ import li.gkd.app.service.ButtonService
 import li.gkd.app.service.EventService
 import li.gkd.app.service.HttpService
 import li.gkd.app.service.TrackService
-import li.gkd.app.ui.MainViewModel
-import li.gkd.app.ui.navigation.AppWindow
+import li.gkd.app.ui.androidState
+import li.gkd.app.ui.platform.UiHost
 import li.gkd.app.ui.share.launchUi
 
-
-actual fun AppWindow.setSnapshotButtonEnabled(enabled: Boolean) {
-    val mainVm = MainViewModel.requireCurrent()
+actual fun UiHost.setSnapshotButtonEnabled(enabled: Boolean) {
     mainVm.scope.launchUi {
-        if (!enabled || mainVm.permissionRequests.ensurePermissions(
+        if (!enabled || mainVm.androidState.permissionRequests.ensurePermissions(
                 PermissionStates.foregroundServiceSpecialUse,
                 PermissionStates.notification,
                 PermissionStates.drawOverlays,
@@ -28,10 +26,9 @@ actual fun AppWindow.setSnapshotButtonEnabled(enabled: Boolean) {
     }
 }
 
-actual fun AppWindow.setHttpServiceEnabled(enabled: Boolean) {
-    val mainVm = MainViewModel.requireCurrent()
+actual fun UiHost.setHttpServiceEnabled(enabled: Boolean) {
     mainVm.scope.launchUi {
-        if (!enabled || mainVm.permissionRequests.ensurePermissions(
+        if (!enabled || mainVm.androidState.permissionRequests.ensurePermissions(
                 PermissionStates.foregroundServiceSpecialUse,
                 PermissionStates.notification,
                 PermissionStates.localNetwork,
@@ -42,10 +39,9 @@ actual fun AppWindow.setHttpServiceEnabled(enabled: Boolean) {
     }
 }
 
-actual fun AppWindow.setActivityMonitorEnabled(enabled: Boolean) {
-    val mainVm = MainViewModel.requireCurrent()
+actual fun UiHost.setActivityMonitorEnabled(enabled: Boolean) {
     mainVm.scope.launchUi {
-        if (!enabled || mainVm.permissionRequests.ensurePermissions(
+        if (!enabled || mainVm.androidState.permissionRequests.ensurePermissions(
                 PermissionStates.foregroundServiceSpecialUse,
                 PermissionStates.notification,
                 PermissionStates.drawOverlays,
@@ -56,10 +52,9 @@ actual fun AppWindow.setActivityMonitorEnabled(enabled: Boolean) {
     }
 }
 
-actual fun AppWindow.setEventMonitorEnabled(enabled: Boolean) {
-    val mainVm = MainViewModel.requireCurrent()
+actual fun UiHost.setEventMonitorEnabled(enabled: Boolean) {
     mainVm.scope.launchUi {
-        if (!enabled || mainVm.permissionRequests.ensurePermissions(
+        if (!enabled || mainVm.androidState.permissionRequests.ensurePermissions(
                 PermissionStates.foregroundServiceSpecialUse,
                 PermissionStates.notification,
                 PermissionStates.drawOverlays,
@@ -70,10 +65,9 @@ actual fun AppWindow.setEventMonitorEnabled(enabled: Boolean) {
     }
 }
 
-actual fun AppWindow.setTrackServiceEnabled(enabled: Boolean) {
-    val mainVm = MainViewModel.requireCurrent()
+actual fun UiHost.setTrackServiceEnabled(enabled: Boolean) {
     mainVm.scope.launchUi {
-        if (!enabled || mainVm.permissionRequests.ensurePermissions(
+        if (!enabled || mainVm.androidState.permissionRequests.ensurePermissions(
                 PermissionStates.foregroundServiceSpecialUse,
                 PermissionStates.notification,
                 PermissionStates.drawOverlays,
@@ -85,25 +79,28 @@ actual fun AppWindow.setTrackServiceEnabled(enabled: Boolean) {
 }
 
 @Composable
-actual fun AppWindow.httpRunning() =
+actual fun httpRunning() =
     HttpService.httpServerFlow.collectAsStateWithLifecycle().value != null
 
 @Composable
-actual fun AppWindow.localNetworkIps() =
-    HttpService.localNetworkIpsFlow.collectAsStateWithLifecycle().value
+actual fun httpServerAddresses() =
+    listOf(li.gkd.app.util.Constants.loopbackHost) + HttpService.localNetworkIpsFlow.collectAsStateWithLifecycle().value
 
 @Composable
-actual fun AppWindow.snapshotButtonRunning() =
+actual fun snapshotButtonRunning() =
     ButtonService.isRunning.collectAsStateWithLifecycle().value
 
 @Composable
-actual fun AppWindow.activityMonitorRunning() =
+actual fun activityMonitorRunning() =
     ActivityService.isRunning.collectAsStateWithLifecycle().value
 
 @Composable
-actual fun AppWindow.eventMonitorRunning() =
+actual fun eventMonitorRunning() =
     EventService.isRunning.collectAsStateWithLifecycle().value
 
 @Composable
-actual fun AppWindow.trackServiceRunning() =
+actual fun trackServiceRunning() =
     TrackService.isRunning.collectAsStateWithLifecycle().value
+
+// The Android service already applies port changes in its lifecycle-owned collector.
+actual fun UiHost.httpServerPortChanged() = Unit

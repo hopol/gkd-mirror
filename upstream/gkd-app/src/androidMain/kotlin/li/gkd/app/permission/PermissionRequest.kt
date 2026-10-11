@@ -17,13 +17,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import li.gkd.app.resources.Res
-import li.gkd.app.resources.permission_request_progress
+import li.gkd.app.resources.*
 import org.jetbrains.compose.resources.getString
 
 class PermissionRequests(
     private val navigateToPrivilegeService: () -> Unit,
-) {
+) : PermissionRequester {
     private val coordinator = PermissionRequestCoordinator()
     private val hostCommands = PermissionHostCommands()
     private val content = PermissionRequestContent(
@@ -59,6 +58,15 @@ class PermissionRequests(
     fun Render(modifier: Modifier = Modifier) {
         content.Render(modifier)
     }
+
+    override suspend fun ensurePermissions(vararg permissions: AppPermission): Boolean =
+        ensurePermissions(*permissions.map { permission ->
+            when (permission) {
+                AppPermission.LocalNetwork -> PermissionStates.localNetwork
+                AppPermission.IgnoreBatteryOptimizations -> PermissionStates.ignoreBatteryOptimizations
+                AppPermission.QueryPackages -> PermissionStates.queryPackages
+            }
+        }.toTypedArray())
 
     suspend fun ensurePermissions(
         vararg permissionStates: PermissionState,
