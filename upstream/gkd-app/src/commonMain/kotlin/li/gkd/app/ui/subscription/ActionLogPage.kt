@@ -49,7 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.nestedScroll
+import li.gkd.app.ui.component.gkTopAppBarScroll
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -105,7 +105,6 @@ import li.gkd.app.ui.share.launchUi
 import li.gkd.app.ui.share.noRippleClickable
 import li.gkd.app.ui.style.itemHorizontalPadding
 import li.gkd.app.ui.style.scaffoldPadding
-import li.gkd.app.ui.text.getSync
 import li.gkd.app.util.ToastUtils
 import li.gkd.db.ActionLog
 import li.gkd.db.RuleGroupType
@@ -122,7 +121,7 @@ fun ActionLogPage(
     val appScoped = subsId == null && appId != null
     val vm = viewModel { ActionLogViewModel(route) }
     val filterAppIds by vm.filterAppIds.collectAsStateWithLifecycle()
-    var showAppFilter by remember { mutableStateOf(false) }
+    val showAppFilter by vm.showAppFilter.collectAsStateWithLifecycle()
     val dialogState by vm.dialogStateFlow.collectAsStateWithLifecycle()
     val scope = vm.scope
     val list = vm.pagingDataFlow.collectAsLazyPagingItems()
@@ -131,7 +130,7 @@ fun ActionLogPage(
     val listState = pageScrollState.listState
     pageScrollState.ResetOnChange(filterAppIds, list.itemCount > 0)
     GkScaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        modifier = Modifier.gkTopAppBarScroll(scrollBehavior),
         topBar = {
             GkTopAppBar(
                 scrollBehavior = scrollBehavior,
@@ -177,7 +176,7 @@ fun ActionLogPage(
                             contentDescription = stringResource(Res.string.action_log_filter_app),
                             onClick = {
                                 vm.setFilterQuery("")
-                                showAppFilter = true
+                                vm.setShowAppFilter(true)
                             },
                         )
                     }
@@ -206,7 +205,7 @@ fun ActionLogPage(
                                 selected = true,
                                 onClick = {
                                     vm.setFilterQuery("")
-                                    showAppFilter = true
+                                    vm.setShowAppFilter(true)
                                 },
                                 label = { GkAppNameText(appId = id) },
                                 trailingIcon = {
@@ -267,17 +266,20 @@ fun ActionLogPage(
             }
         })
 
+    val showFilterSearch by vm.showFilterSearch.collectAsStateWithLifecycle()
     if (showAppFilter) {
         val apps by vm.filterApps.collectAsStateWithLifecycle()
         val query by vm.filterQuery.collectAsStateWithLifecycle()
         ActionLogAppFilterSheet(
+            showSearch = showFilterSearch,
+            onShowSearchChange = vm::setShowFilterSearch,
             apps = apps,
             query = query,
             selectedAppIds = filterAppIds,
             onQueryChange = vm::setFilterQuery,
             onToggleApp = vm::toggleFilterApp,
             onClear = vm::clearAppFilter,
-            onDismissRequest = { showAppFilter = false },
+            onDismissRequest = { vm.setShowAppFilter(false) },
         )
     }
 
@@ -326,6 +328,8 @@ fun ActionLogPage(
 
 @Composable
 private fun ActionLogAppFilterSheet(
+    showSearch: Boolean,
+    onShowSearchChange: (Boolean) -> Unit,
     apps: Loadable<List<ActionLogAppOption>>,
     query: String,
     selectedAppIds: Set<String>,
@@ -334,13 +338,12 @@ private fun ActionLogAppFilterSheet(
     onClear: () -> Unit,
     onDismissRequest: () -> Unit,
 ) {
-    var showSearch by remember { mutableStateOf(false) }
     var listHeight by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
     fun closeSearch() {
-        showSearch = false
+        onShowSearchChange(false)
         focusManager.clearFocus()
         keyboardController?.hide()
     }
@@ -394,7 +397,7 @@ private fun ActionLogAppFilterSheet(
                         else Res.string.search_close,
                     ),
                     onClick = {
-                        if (!showSearch) showSearch = true
+                        if (!showSearch) onShowSearchChange(true)
                         else if (query.isNotEmpty()) onQueryChange("")
                         else closeSearch()
                     },
@@ -403,9 +406,9 @@ private fun ActionLogAppFilterSheet(
             AnimatedContent(
                 targetState = apps,
                 modifier = Modifier.weight(1f, fill = false).fillMaxWidth()
-                    .then(if (showSearch) Modifier.height(listHeight) else Modifier)
+                    .then(if (showSearch && listHeight > 0.dp) Modifier.height(listHeight) else Modifier)
                     .onSizeChanged {
-                        if (!showSearch) listHeight = with(density) { it.height.toDp() }
+                        if (!showSearch || listHeight == 0.dp) listHeight = with(density) { it.height.toDp() }
                     },
                 transitionSpec = { (fadeIn(tween(150)) togetherWith fadeOut(tween(150))).using(null) },
             ) { displayedApps ->

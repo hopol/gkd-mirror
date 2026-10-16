@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SyncProblem
 import androidx.compose.material.icons.filled.UnfoldMore
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.outlined.Add
@@ -52,6 +53,8 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Title
 import androidx.compose.material.icons.outlined.ToggleOff
+import li.gkd.app.ui.icon.Bolt as SharedBolt
+import androidx.compose.material.icons.automirrored.outlined.Rule
 import androidx.compose.material.icons.outlined.ToggleOn
 import androidx.compose.material.icons.outlined.VerifiedUser
 import androidx.compose.material3.Icon
@@ -59,6 +62,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonColors
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material.icons.outlined.Key
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -68,6 +72,7 @@ import androidx.compose.ui.semantics.semantics
 import li.gkd.app.resources.*
 import li.gkd.app.ui.icon.AndroidHead
 import li.gkd.app.ui.icon.LinkDiagonal as SharedLinkDiagonal
+import li.gkd.app.ui.icon.Logo as SharedLogo
 import li.songe.morph.compose.AnimatedMorphIcon
 import org.jetbrains.compose.resources.stringResource
 import li.gkd.app.ui.icon.CollapseContent as SharedCollapseContent
@@ -77,6 +82,12 @@ import li.gkd.app.ui.icon.FlashOn as SharedFlashOn
 import li.gkd.app.ui.icon.Flowchart as SharedFlowchart
 import li.gkd.app.ui.icon.PageInfo as SharedPageInfo
 import li.gkd.app.ui.icon.StackedDocuments as SharedStackedDocuments
+import li.gkd.app.ui.icon.TileStatus as SharedTileStatus
+import li.gkd.app.ui.icon.TileCapture as SharedTileCapture
+import li.gkd.app.ui.icon.TileHttp as SharedTileHttp
+import li.gkd.app.ui.icon.TileButton as SharedTileButton
+import li.gkd.app.ui.icon.TileActivity as SharedTileActivity
+import li.gkd.app.ui.icon.TileEvent as SharedTileEvent
 
 @Composable
 fun GkIcon(
@@ -156,6 +167,13 @@ fun getIconDefaultDesc(imageVector: ImageVector): String? = when (imageVector) {
 }
 
 object GkIcons {
+    val Logo get() = SharedLogo
+    val TileStatus get() = SharedTileStatus
+    val TileCapture get() = SharedTileCapture
+    val TileHttp get() = SharedTileHttp
+    val TileButton get() = SharedTileButton
+    val TileActivity get() = SharedTileActivity
+    val TileEvent get() = SharedTileEvent
     val PlayArrow get() = Icons.Filled.PlayArrow
     val Link get() = Icons.Outlined.Link
     val LinkDiagonal get() = SharedLinkDiagonal
@@ -167,12 +185,15 @@ object GkIcons {
     val FlashOff get() = SharedFlashOff
     val Block get() = Icons.Default.Block
     val History get() = Icons.Default.History
+    val Bolt get() = SharedBolt
+    val Rule get() = Icons.AutoMirrored.Outlined.Rule
     val Schedule get() = Icons.Outlined.Schedule
     val CollapseContent get() = SharedCollapseContent
     val ExpandContent get() = SharedExpandContent
     val Sort get() = Icons.AutoMirrored.Filled.Sort
     val Add get() = Icons.Outlined.Add
     val KeyboardArrowRight get() = Icons.AutoMirrored.Filled.KeyboardArrowRight
+    val Key get() = Icons.Outlined.Key
     val ContentCopy get() = Icons.Outlined.ContentCopy
     val MoreVert get() = Icons.Default.MoreVert
     val ArrowBack get() = Icons.AutoMirrored.Filled.ArrowBack
@@ -198,6 +219,7 @@ object GkIcons {
     val Image get() = Icons.Outlined.Image
     val AddPhotoAlternate get() = Icons.Outlined.AddPhotoAlternate
     val WarningAmber get() = Icons.Default.WarningAmber
+    val SyncProblem get() = Icons.Default.SyncProblem
     val RocketLaunch get() = Icons.Outlined.RocketLaunch
     val CenterFocusWeak get() = Icons.Default.CenterFocusWeak
     val AutoMode get() = Icons.Outlined.AutoMode

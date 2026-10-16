@@ -1,5 +1,6 @@
 package li.gkd.app.ui.subscription
 
+import li.gkd.app.rule.toRuleGroupTarget
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -12,7 +13,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
+import li.gkd.app.ui.component.gkTopAppBarScroll
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import li.gkd.app.resources.*
@@ -37,20 +38,18 @@ import li.gkd.app.ui.component.GkScaffold
 import li.gkd.app.ui.component.GkSubscriptionPageContent
 import li.gkd.app.ui.component.GkTwoLineText
 import li.gkd.app.ui.component.rememberListScrollState
-import li.gkd.app.ui.component.rememberMultiSelectionState
 import li.gkd.app.ui.component.rememberRuleControlEnvironment
 import li.gkd.app.ui.home.rememberVisitOrder
 import li.gkd.app.ui.navigation.CategoryEditorRoute
 import li.gkd.app.ui.navigation.SubsAppGroupListRoute
 import li.gkd.app.ui.navigation.SubsCategoryGroupRoute
-import li.gkd.app.ui.option.AppSortOption
-import li.gkd.app.ui.option.findOption
+import li.gkd.app.app.AppSort
+import li.gkd.app.model.findOption
 import li.gkd.app.ui.platform.GkBackHandler
 import li.gkd.app.ui.share.DeletionTarget
 import li.gkd.app.ui.share.ListPlaceholder
 import li.gkd.app.ui.share.launchUi
 import li.gkd.app.ui.style.scaffoldPadding
-import li.gkd.app.ui.text.getSync
 import li.gkd.app.util.ToastUtils
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
@@ -79,7 +78,7 @@ fun SubsCategoryGroupPage(
         val configIndex = remember(state.configs) { RuleConfigIndex(state.configs) }
         val category = state.category
         val sortedApps =
-            remember(state.apps, appMap, settings, state.appActionOrder, visitOrder, blockApps) {
+            remember(state.apps, appMap, settings, state.appActionOrder, state.triggerStats, visitOrder, blockApps) {
                 filterSubsApps(
                     apps = state.apps,
                     appMap = appMap,
@@ -88,8 +87,9 @@ fun SubsCategoryGroupPage(
                     appVisitOrderMap = visitOrder.value.orEmpty(),
                     blockSet = blockApps,
                     appGroupType = { it.subsCategoryGroupType },
-                    sortType = { AppSortOption.objects.findOption(it.subsCategorySort) },
+                    sortType = { AppSort.options.findOption(it.subsCategorySort) },
                     showBlockApps = { it.subsCategoryShowBlock },
+                    triggerCounts = state.triggerStats.byApp.mapValues { it.value.count },
                 )
             }
         val controls = remember(state, environment) {
@@ -113,10 +113,11 @@ fun SubsCategoryGroupPage(
         val selectableTargets = remember(visibleTargets, controls) {
             visibleTargets.filterTo(mutableSetOf()) { controls.getValue(it.appId to it.groupKey).canEnable }
         }
-        val selection = rememberMultiSelectionState<RuleGroupTarget.App>()
-        val selected = selection.selectedKeys intersect selectableTargets
+        val selection = vm.selection
+        val selectionSnapshot by selection.state.collectAsStateWithLifecycle()
+        val selected = selectionSnapshot.selectedKeys intersect selectableTargets
         LaunchedEffect(selectableTargets) { selection.retain(selectableTargets) }
-        GkBackHandler(selection.active) { selection.clear() }
+        GkBackHandler(selectionSnapshot.active) { selection.clear() }
         val scroll = rememberListScrollState()
         fun updateGroups(
             targets: Set<RuleGroupTarget.App>,
@@ -175,10 +176,10 @@ fun SubsCategoryGroupPage(
             }
         }
         GkScaffold(
-            modifier = Modifier.nestedScroll(scroll.scrollBehavior.nestedScrollConnection),
+            modifier = Modifier.gkTopAppBarScroll(scroll.scrollBehavior),
             topBar = {
                 GkMultiSelectionTopAppBar(
-                    selectedMode = selection.active,
+                    selectedMode = selectionSnapshot.active,
                     selectedCount = selected.size,
                     onExitSelection = selection::clear,
                     onNavigateBack = mainVm.navigator::pop,
@@ -188,8 +189,8 @@ fun SubsCategoryGroupPage(
                     actions = { selectedMode ->
                         if (selectedMode) {
                             GkMultiSelectionActions(
-                                selection,
-                                selectableTargets,
+                                selectionSnapshot.selectedKeys,
+                                selectableTargets, selection::selectAll, selection::invert,
                                 enabled = !busy
                             ) { dismiss ->
                                 GkBatchActionMenuItem(
@@ -250,7 +251,7 @@ fun SubsCategoryGroupPage(
                 apps.forEach { app ->
                     stickyHeader("app:${app.id}") {
                         GkRuleListHeader(
-                            enabled = !selection.active,
+                            enabled = !selectionSnapshot.active,
                             onClickLabel = stringResource(Res.string.app_view_all_rules),
                             onClick = {
                                 mainVm.navigator.navigate(
@@ -276,6 +277,7 @@ fun SubsCategoryGroupPage(
                             subs = subs,
                             appId = app.id,
                             group = group,
+                            triggerSummary = state.triggerStats.group(target),
                             control = controls.getValue(app.id to group.key),
                             hideCategoryPrefix = true,
                             onOpen = { mainVm.showRuleGroup(subs.id, app.id, group, app.id) },
@@ -286,7 +288,7 @@ fun SubsCategoryGroupPage(
                                         .failureMessage()?.let { ToastUtils.show(it) }
                                 }
                             },
-                            isSelectedMode = selection.active,
+                            isSelectedMode = selectionSnapshot.active,
                             isSelected = target in selected,
                             selectionEnabled = !busy,
                             onLongClick = { if (!busy) selection.select(target) },

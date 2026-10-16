@@ -29,7 +29,6 @@ import li.gkd.app.ui.MainViewModel
 import li.gkd.app.subscription.SubscriptionRepository
 import li.gkd.app.ui.navigation.ActionLogRoute
 import li.gkd.app.ui.state.BaseViewModel
-import li.gkd.app.ui.text.getSync
 import li.gkd.db.ActionLog
 import li.gkd.db.Db
 import li.gkd.db.RuleGroupType
@@ -60,6 +59,21 @@ data class ActionLogAppOption(val id: String, val name: String)
 class ActionLogViewModel(
     val route: ActionLogRoute,
 ) : BaseViewModel() {
+    val showAppFilter: StateFlow<Boolean>
+        field = MutableStateFlow(false)
+
+    val showFilterSearch: StateFlow<Boolean>
+        field = MutableStateFlow(false)
+
+    fun setShowFilterSearch(value: Boolean) {
+        showFilterSearch.value = value
+    }
+
+    fun setShowAppFilter(value: Boolean) {
+        if (value && !showAppFilter.value) showFilterSearch.value = false
+        showAppFilter.value = value
+    }
+
 
     val filterAppIds: StateFlow<Set<String>>
         field = MutableStateFlow(emptySet())

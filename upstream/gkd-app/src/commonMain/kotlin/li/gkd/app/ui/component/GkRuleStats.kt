@@ -9,6 +9,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,6 +55,8 @@ fun GkRuleStats(
     stats: GkRuleStatsData,
     modifier: Modifier = Modifier,
     emptyText: String = stringResource(Res.string.rules_empty),
+    triggerCount: Long = 0,
+    textStyle: TextStyle = MaterialTheme.typography.bodyMedium,
 ) {
     val entries = buildList {
         stats.globalGroups?.takeIf { it > 0 || stats.showZeroCounts }
@@ -61,17 +64,20 @@ fun GkRuleStats(
         stats.apps?.takeIf { it > 0 || stats.showZeroCounts }
             ?.let { add(GkIcons.Android to it.toString()) }
         stats.appGroups?.takeIf { it > 0 || stats.showZeroCounts }?.let {
-            add(GkIcons.FlashOn to (stats.enabledAppGroups?.let { enabled -> "$enabled/$it" }
+            add(GkIcons.Rule to (stats.enabledAppGroups?.let { enabled -> "$enabled/$it" }
                 ?: it.toString()))
         }
     }
-    val description = stats.description
+    val description = listOfNotNull(
+        stats.description.takeIf { it.isNotEmpty() },
+        if (triggerCount > 0) stringResource(Res.string.trigger_count_value, triggerCount.toString()) else null,
+    ).joinToString("，")
     val color = MaterialTheme.colorScheme.onSurfaceVariant
-    if (!stats.hasRules && !stats.showZeroCounts) {
-        Text(
+    if (!stats.hasRules && !stats.showZeroCounts && triggerCount == 0L) {
+        if (emptyText.isNotEmpty()) Text(
             text = emptyText,
             modifier = modifier,
-            style = MaterialTheme.typography.bodyMedium,
+            style = textStyle,
             color = color,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -80,6 +86,8 @@ fun GkRuleStats(
         FlowRow(
             modifier = modifier.clearAndSetSemantics { contentDescription = description },
             horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            itemVerticalAlignment = Alignment.CenterVertically,
         ) {
             entries.forEachIndexed { index, (icon, count) ->
                 Row(
@@ -87,7 +95,7 @@ fun GkRuleStats(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     if (index > 0) {
-                        Text("·", style = MaterialTheme.typography.bodyMedium, color = color)
+                        Text("·", style = textStyle, color = color)
                     }
                     GkIcon(
                         icon,
@@ -95,7 +103,18 @@ fun GkRuleStats(
                         contentDescription = null,
                         tint = color
                     )
-                    Text(count, style = MaterialTheme.typography.bodyMedium, color = color)
+                    Text(count, style = textStyle, color = color)
+                }
+            }
+            if (triggerCount > 0) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    if (entries.isNotEmpty()) {
+                        Text("·", style = textStyle, color = color)
+                    }
+                    GkTriggerCount(triggerCount, showTooltip = false)
                 }
             }
         }

@@ -17,6 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,7 +48,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowState
 import li.gkd.app.ui.component.GkIcons
-import li.gkd.app.ui.icon.Logo
 import java.awt.Rectangle
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -135,6 +135,10 @@ fun GkDesktopWindowFrame(
             installed?.close()
             DesktopWindowGeometry.clear(window)
         }
+    }
+    val borderArgb = MaterialTheme.colorScheme.surfaceContainer.toArgb()
+    LaunchedEffect(controller, dark, borderArgb) {
+        controller?.updateTheme(dark, borderArgb)
     }
     val showTitle = controller != null && state.placement != WindowPlacement.Fullscreen
     DisposableEffect(window, frameInitialized, viewportSize, showTitle, density) {

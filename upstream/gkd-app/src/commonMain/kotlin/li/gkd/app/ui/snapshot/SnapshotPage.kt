@@ -49,7 +49,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.nestedscroll.nestedScroll
+import li.gkd.app.ui.component.gkTopAppBarScroll
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -91,12 +91,10 @@ import li.gkd.app.ui.component.GkMultiSelectionTopAppBar
 import li.gkd.app.ui.component.GkPageBottomSpace
 import li.gkd.app.ui.component.GkRetainedSheet
 import li.gkd.app.ui.component.GkScaffold
-import li.gkd.app.ui.component.SheetRequest
-import li.gkd.app.ui.component.rememberMultiSelectionState
 import li.gkd.app.ui.image.appImageLoader
 import li.gkd.app.ui.navigation.SnapshotPreviewRoute
-import li.gkd.app.ui.option.SnapshotDisplayModeOption
-import li.gkd.app.ui.option.findOption
+import li.gkd.app.snapshot.SnapshotDisplayMode
+import li.gkd.app.model.findOption
 import li.gkd.app.ui.platform.GkBackHandler
 import li.gkd.app.ui.platform.UiHost
 import li.gkd.app.ui.share.ListPlaceholder
@@ -123,7 +121,7 @@ fun SnapshotPage(
 
     val loadableState by vm.uiState.collectAsStateWithLifecycle()
     val settings by SettingsRepository.settings.collectAsStateWithLifecycle()
-    val displayMode = SnapshotDisplayModeOption.objects.findOption(settings.snapshotDisplayMode)
+    val displayMode = SnapshotDisplayMode.entries.findOption(settings.snapshotDisplayMode)
     val actionScope = vm.scope
     val firstLoading = loadableState is Loadable.Loading
     val loadError = (loadableState as? Loadable.Failure)?.cause
@@ -140,12 +138,13 @@ fun SnapshotPage(
         mainVm.navigator.navigate(SnapshotPreviewRoute(snapshotId, previewSnapshotIds))
     }
 
-    var actionRequest by remember { mutableStateOf<SheetRequest<Long>?>(null) }
+    val actionRequest by vm.actionRequest.collectAsStateWithLifecycle()
     val actionSnapshot = actionRequest?.let { request -> snapshots.find { it.id == request.key } }
     val thumbnailVersions = remember { mutableStateMapOf<Long, Int>() }
-    val selectionState = rememberMultiSelectionState<Long>()
+    val selectionState = vm.selection
+    val selectionSnapshot by selectionState.state.collectAsStateWithLifecycle()
     val allIds = remember(snapshots) { snapshots.mapTo(mutableSetOf()) { it.id } }
-    val selectedIds = selectionState.selectedKeys intersect allIds
+    val selectedIds = selectionSnapshot.selectedKeys intersect allIds
     val selectedSnapshots = displayedSnapshots.filter { it.id in selectedIds }
     val hasUnlinkedSnapshots = remember(snapshots) { snapshots.any { it.githubAssetId == null } }
     val pendingUploads = selectedSnapshots.filter { it.githubAssetId == null }
@@ -228,10 +227,10 @@ fun SnapshotPage(
     LaunchedEffect(allIds, loadableState) {
         if (loadableState is Loadable.Ready) selectionState.retain(allIds)
     }
-    GkBackHandler(selectionState.active) { selectionState.clear() }
+    GkBackHandler(selectionSnapshot.active) { selectionState.clear() }
 
     GkScaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        modifier = Modifier.gkTopAppBarScroll(scrollBehavior),
         snackbarHost = {
             shareProgress?.let {
                 GkSnapshotShareProgress(it, vm::cancelShare, host.snapshotShareCornerPadding())
@@ -239,7 +238,7 @@ fun SnapshotPage(
         },
         topBar = {
             GkMultiSelectionTopAppBar(
-                selectedMode = selectionState.active,
+                selectedMode = selectionSnapshot.active,
                 selectedCount = selectedIds.size,
                 onExitSelection = selectionState::clear,
                 onNavigateBack = mainVm.navigator::pop,
@@ -249,8 +248,10 @@ fun SnapshotPage(
                 actions = { selectedMode ->
                     if (selectedMode) {
                         GkMultiSelectionActions(
-                            selectionState = selectionState,
+                            selected = selectionSnapshot.selectedKeys,
                             keys = allIds,
+                            onSelectAll = selectionState::selectAll,
+                            onInvert = selectionState::invert,
                             enabled = loadableState is Loadable.Ready,
                         ) { dismiss ->
                             GkBatchActionMenuItem(
@@ -373,25 +374,24 @@ fun SnapshotPage(
                             )
                         }
                     } else {
-                        val displayModeLabel = displayMode.label
-                        val nextMode = when (displayMode) {
-                            SnapshotDisplayModeOption.ByTime -> SnapshotDisplayModeOption.ByApp
-                            SnapshotDisplayModeOption.ByApp -> SnapshotDisplayModeOption.ByTime
-                        }
+                        val displayModeLabel = stringResource(displayMode.labelResource)
+                        val nextMode = SnapshotDisplayMode.entries.findOption(
+                            SnapshotDisplayMode.switch(settings.snapshotDisplayMode)
+                        )
                         GkIconButton(
                             imageVector = when (displayMode) {
-                                SnapshotDisplayModeOption.ByTime -> GkIcons.CalendarMonth
-                                SnapshotDisplayModeOption.ByApp -> GkIcons.Apps
+                                SnapshotDisplayMode.ByTime -> GkIcons.CalendarMonth
+                                SnapshotDisplayMode.ByApp -> GkIcons.Apps
                             },
                             animateMorph = true,
                             modifier = Modifier.semantics { stateDescription = displayModeLabel },
                             contentDescription = when (nextMode) {
-                                SnapshotDisplayModeOption.ByTime -> stringResource(Res.string.snapshot_view_switch_to_time)
-                                SnapshotDisplayModeOption.ByApp -> stringResource(Res.string.snapshot_view_switch_to_app)
+                                SnapshotDisplayMode.ByTime -> stringResource(Res.string.snapshot_view_switch_to_time)
+                                SnapshotDisplayMode.ByApp -> stringResource(Res.string.snapshot_view_switch_to_app)
                             },
                             onClick = {
                                 SettingsRepository.updateSettings {
-                                    it.copy(snapshotDisplayMode = nextMode.value)
+                                    it.copy(snapshotDisplayMode = SnapshotDisplayMode.switch(it.snapshotDisplayMode))
                                 }
                                 resetScroll()
                             },
@@ -423,7 +423,7 @@ fun SnapshotPage(
                     SnapshotGroupHeader(
                         title = group.title,
                         appId = group.appId,
-                        selectedMode = selectionState.active,
+                        selectedMode = selectionSnapshot.active,
                         groupSelectionState = groupSelectionState,
                         onToggleSelection = {
                             if (groupSelectionState == ToggleableState.On) {
@@ -438,19 +438,19 @@ fun SnapshotPage(
                     SnapshotCard(
                         imageLoader, snapshot = snapshot,
                         appName = appNames[snapshot.appId] ?: snapshot.appId,
-                        showAppName = displayMode != SnapshotDisplayModeOption.ByApp,
+                        showAppName = displayMode != SnapshotDisplayMode.ByApp,
                         thumbnailVersion = thumbnailVersions[snapshot.id] ?: 0,
-                        selectedMode = selectionState.active,
+                        selectedMode = selectionSnapshot.active,
                         selected = snapshot.id in selectedIds,
                         onClick = {
-                            if (selectionState.active) {
+                            if (selectionSnapshot.active) {
                                 selectionState.toggle(snapshot.id)
                             } else {
                                 openPreview(snapshot.id)
                             }
                         },
                         onLongClick = { selectionState.select(snapshot.id) },
-                        onMore = { actionRequest = SheetRequest(snapshot.id) },
+                        onMore = { vm.showActions(snapshot.id) },
                     )
                 }
             }
@@ -479,7 +479,7 @@ fun SnapshotPage(
         snapshot = actionSnapshot,
         missing = actionRequest != null && actionSnapshot == null && loadableState is Loadable.Ready,
         onDismissRequest = { request ->
-            if (actionRequest === request) actionRequest = null
+            vm.dismissActions(request)
         },
     ) { _, snapshot, sheetState, dismiss ->
         val actions =

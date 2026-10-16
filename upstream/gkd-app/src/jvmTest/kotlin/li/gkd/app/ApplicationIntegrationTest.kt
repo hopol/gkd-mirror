@@ -27,7 +27,7 @@ import li.gkd.app.backup.BackupManager
 import li.gkd.app.crash.assertCrashReports
 import li.gkd.app.model.AppInfo
 import li.gkd.app.model.AppInventory
-import li.gkd.app.network.assertInspectionProtocol
+import li.gkd.app.network.inspection.assertInspectionProtocol
 import li.gkd.app.resources.*
 import li.gkd.app.settings.SettingsRepository
 import li.gkd.app.settings.SettingsRepositoryChecks
@@ -55,6 +55,7 @@ import li.gkd.app.util.LogUtils
 import li.gkd.db.Db
 import li.gkd.db.ActionLog
 import li.gkd.db.RuleGroupType
+import li.gkd.db.SubscriptionIds
 import li.gkd.db.SubsItem
 import li.gkd.db.SubscriptionConfigStore
 import org.jetbrains.compose.resources.getString
@@ -94,10 +95,12 @@ class ApplicationIntegrationTest {
             store.resolve("store.json")
                 .writeText("""{"appGroupType":7,"enableDynamicColor":false,"futureOption":123}""")
             store.resolve("overlay_position.json").writeText("""{"legacy":[12,34]}""")
+            // Explicit rejection keeps the acceptance persistence and failed-write checks active.
+            store.resolve("terms_accepted.txt").writeText("false")
             // An Android recovery file without a database row must keep its user-supplied name.
             val subscriptions = DesktopStorage.data.resolve("files/subscription").apply { mkdirs() }
-            subscriptions.resolve("${li.gkd.db.LOCAL_SUBS_ID}.json.bak").writeText(
-                """{"id":${li.gkd.db.LOCAL_SUBS_ID},"name":"My saved rules","version":7}"""
+            subscriptions.resolve("${SubscriptionIds.LOCAL}.json.bak").writeText(
+                """{"id":${SubscriptionIds.LOCAL},"name":"My saved rules","version":7}"""
             )
             val profile = DesktopProfile
             assertEquals(setOf("example.blocked"), profile.blocked)
@@ -126,11 +129,12 @@ class ApplicationIntegrationTest {
                 assertActionLogSubscriptionLoadFailure()
                 assertRootNavigationLifecycle(runtime)
                 assertAppRuleParentVisibility()
-                SettingsRepositoryChecks.run(appStorage().store, profile.appName)
+                SettingsRepositoryChecks.run(appStorage().store, META.appName)
                 li.gkd.app.network.assertUpdateClient(session.resolve("update-client"))
                 assertIgnoredVersionsRetry(runtime.toast)
                 assertCrashReports()
                 assertCookiePersistence(appStorage().privateStore)
+                li.gkd.app.external.assertExternalCalls()
                 li.gkd.app.rule.RuleSwitchPolicyTest()
                     .requestRejectsChangedSwitchesButAcceptsConcurrentPageAndOtherAppEdits()
                 li.gkd.app.snapshot.SnapshotCaptureRepositoryTest(appStorage()).runAll()
@@ -144,9 +148,10 @@ class ApplicationIntegrationTest {
                     archiveContainsMaterialsAndExpiredCacheIsCleanedByMaintenance()
                     materialFailurePreservesCauseAndLeavesFilesForCacheMaintenance()
                 }
+                li.gkd.app.backup.assertBackupSnapshotConsistency()
                 assertBackupRoundTrip(appStorage())
             }
-            assertFailsWith<IllegalStateException> { li.gkd.app.network.isNetworkAvailable() }
+            assertFailsWith<IllegalStateException> { li.gkd.app.network.isNetworkRequestAllowed() }
             assertFailsWith<IllegalStateException> { li.gkd.app.app.openAppCatalog() }
             val logs = appStorage().log.listFiles()!!.associate { it.name to it.readText() }
             LogUtils.d("log-after-close")
@@ -202,8 +207,8 @@ class ApplicationIntegrationTest {
     }
 
     private suspend fun assertSubscriptionCreationNames() {
-        val localId = li.gkd.db.LOCAL_SUBS_ID
-        val memoryId = li.gkd.db.LOCAL_HTTP_SUBS_ID
+        val localId = SubscriptionIds.LOCAL
+        val memoryId = SubscriptionIds.LOCAL_HTTP
         assertEquals("My saved rules", SubscriptionRepository.awaitSnapshot().subscriptions.getValue(localId).name)
         val localFile = appStorage().subscription.resolve("$localId.json")
         val originalBytes = localFile.readBytes()
@@ -242,7 +247,7 @@ class ApplicationIntegrationTest {
         val file = appStorage().store.resolve("ignore_version_list.json")
         val previous = file.takeIf { it.exists() }?.readBytes()
         val initialRevision = toast.revision
-        assertFalse(li.gkd.app.network.isNetworkAvailable())
+        assertFalse(li.gkd.app.network.isNetworkRequestAllowed())
         val networkUnavailable = getString(Res.string.network_unavailable)
         // This headless runtime has no composition to dispatch global snapshot changes.
         val snapshotChanges = Channel<Unit>(Channel.CONFLATED)
@@ -252,9 +257,7 @@ class ApplicationIntegrationTest {
         }
         try {
             file.writeText("invalid-json")
-            val update = UpdateStatus(
-                this, 1, "test",
-            )
+            val update = UpdateStatus(this)
             suspend fun checkManually() {
                 val previousRevision = toast.revision
                 update.checkUpdate(manual = true)
@@ -473,6 +476,18 @@ class ApplicationIntegrationTest {
         val second = li.gkd.db.SubsItem(id = 900002, order = 101)
         try {
             val vm = HomeViewModel().also { owner.put("home", it) }
+            // A retained page keeps selection; both user and host tab changes clear it.
+            vm.homeState.selectTab(BottomNavItem.SubsManage)
+            vm.selection.select(first.id)
+            vm.homeState.clickTab(BottomNavItem.SubsManage)
+            assertEquals(setOf(first.id), vm.selection.state.value.selectedKeys)
+            assertEquals(setOf(first.id), (owner["home"] as HomeViewModel).selection.state.value.selectedKeys)
+            vm.homeState.clickTab(BottomNavItem.Settings)
+            assertFalse(vm.selection.state.value.active)
+            vm.homeState.selectTab(BottomNavItem.SubsManage)
+            vm.selection.select(second.id)
+            vm.homeState.selectTab(BottomNavItem.AppList)
+            assertFalse(vm.selection.state.value.active)
             withTimeout(5_000) { vm.appsState.first { it.value?.apps?.size == 2 } }
             withTimeout(5_000) { vm.latestState.first { it is li.gkd.app.state.Loadable.Ready } }
             withTimeout(5_000) { vm.subscriptionsState.first { it is li.gkd.app.state.Loadable.Ready } }

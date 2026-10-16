@@ -14,7 +14,6 @@ import li.gkd.app.ui.platform.UiHost
 import li.gkd.app.ui.platform.hideIme
 import li.gkd.app.ui.platform.inputInsets
 import li.gkd.app.ui.style.scaffoldPadding
-import li.gkd.app.ui.text.getSync
 import li.gkd.app.util.ToastUtils
 import org.jetbrains.compose.resources.stringResource
 
@@ -41,7 +40,7 @@ fun AppWhitelistPage(
         ),
         navigator = mainVm.navigator,
         hideIme = host::hideIme,
-        scope = mainVm.scope,
+        actions = vm.editorActions,
     ) { padding ->
         GkMultiTextField(
             modifier = Modifier.scaffoldPadding(padding),

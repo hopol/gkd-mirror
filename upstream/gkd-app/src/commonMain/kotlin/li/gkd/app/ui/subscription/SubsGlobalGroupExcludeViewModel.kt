@@ -1,5 +1,7 @@
 package li.gkd.app.ui.subscription
 
+import li.gkd.app.record.TriggerStats
+import li.gkd.app.ui.component.MultiSelectionState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -16,9 +18,9 @@ import li.gkd.app.state.MutexState
 import li.gkd.app.subscription.RawSubscription
 import li.gkd.app.ui.MainViewModel
 import li.gkd.app.ui.navigation.SubsGlobalGroupExcludeRoute
-import li.gkd.app.ui.option.AppSortOption
+import li.gkd.app.app.AppSort
+import li.gkd.app.ui.page.EditorActionsState
 import li.gkd.app.ui.state.BaseViewModel
-import li.gkd.app.ui.text.getSync
 import li.gkd.db.Db
 import li.gkd.db.SubscriptionConfigSnapshot
 import li.gkd.db.SubscriptionConfigStore
@@ -28,6 +30,7 @@ data class SubsGlobalGroupExcludeUiState(
     val group: RawSubscription.RawGlobalGroup,
     val configs: SubscriptionConfigSnapshot,
     val appActionOrder: Map<String, Int>,
+    val triggerStats: TriggerStats,
 ) {
     private val config = configs.globalGroupConfigs.find {
         it.subsId == subscription.id && it.groupKey == group.key
@@ -41,6 +44,10 @@ data class SubsGlobalGroupExcludeUiState(
 class SubsGlobalGroupExcludeViewModel(
     val route: SubsGlobalGroupExcludeRoute,
 ) : BaseViewModel() {
+    val editorActions = EditorActionsState(scope)
+
+    val selection = MultiSelectionState<String>()
+
     val draft: StateFlow<RuleExcludeEditorDraft?>
         field = MutableStateFlow(null)
     private var saveSession = EditorSaveSession<Boolean>()
@@ -90,19 +97,21 @@ class SubsGlobalGroupExcludeViewModel(
     val uiState = RequiredSubscription(route.subsItemId, scope).buildUiState { subscription ->
         combine(
             SubscriptionConfigStore.observe(),
-            Db.actionLogDao.queryLatestUniqueAppIds(route.subsItemId, route.groupKey)
-        ) { configs, ids ->
+            Db.actionLogDao.queryLatestUniqueAppIds(route.subsItemId, route.groupKey),
+            Db.ruleTriggerStatsDao.observe(subsId = route.subsItemId, groupType = li.gkd.db.RuleGroupType.Global, groupKey = route.groupKey)
+        ) { configs, ids, records ->
             SubsGlobalGroupExcludeUiState(
                 subscription,
                 subscription.globalGroups.find { it.key == route.groupKey }
                     ?: error(Res.string.global_rule_missing.getSync()),
                 configs,
-                ids.mapIndexed { i, id -> id to i }.toMap()
+                ids.mapIndexed { i, id -> id to i }.toMap(),
+                TriggerStats(records)
             )
         }
     }
 
-    fun setSortType(option: AppSortOption) {
+    fun setSortType(option: AppSort) {
         SettingsRepository.updateSettings { it.copy(subsExcludeSort = option.value) }
     }
 

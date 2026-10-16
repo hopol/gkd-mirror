@@ -14,7 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
+import li.gkd.app.ui.component.gkTopAppBarScroll
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -39,7 +39,6 @@ import li.gkd.app.ui.component.GkSubscriptionPageContent
 import li.gkd.app.ui.component.GkTooltipIconButtonBox
 import li.gkd.app.ui.component.GkTwoLineText
 import li.gkd.app.ui.component.rememberListScrollState
-import li.gkd.app.ui.component.rememberMultiSelectionState
 import li.gkd.app.ui.navigation.CategoryEditorRoute
 import li.gkd.app.ui.navigation.SubsCategoryGroupRoute
 import li.gkd.app.ui.navigation.SubsCategoryRoute
@@ -58,14 +57,15 @@ fun SubsCategoryPage(
     val mainVm = MainViewModel.requireCurrent()
     val vm = viewModel { SubsCategoryViewModel(route) }
     val busy by vm.busyFlow.collectAsStateWithLifecycle()
-    val selection = rememberMultiSelectionState<Int>()
-    GkBackHandler(selection.active) { selection.clear() }
+    val selection = vm.selection
+    val selectionSnapshot by selection.state.collectAsStateWithLifecycle()
+    GkBackHandler(selectionSnapshot.active) { selection.clear() }
     GkSubscriptionPageContent(vm.uiState, mainVm.navigator::pop) { state ->
         val subs = state.subscription
         val scroll = rememberListScrollState()
         val keys =
             remember(state.categories) { state.categories.mapTo(mutableSetOf()) { it.category.key } }
-        val selected = selection.selectedKeys intersect keys
+        val selected = selectionSnapshot.selectedKeys intersect keys
         LaunchedEffect(keys) { selection.retain(keys) }
         fun setSelected(setting: CategorySetting) {
             val selectedKeys = selected
@@ -77,10 +77,10 @@ fun SubsCategoryPage(
             }
         }
         GkScaffold(
-            modifier = Modifier.nestedScroll(scroll.scrollBehavior.nestedScrollConnection),
+            modifier = Modifier.gkTopAppBarScroll(scroll.scrollBehavior),
             topBar = {
                 GkMultiSelectionTopAppBar(
-                    selectedMode = selection.active,
+                    selectedMode = selectionSnapshot.active,
                     selectedCount = selected.size,
                     onExitSelection = selection::clear,
                     onNavigateBack = mainVm.navigator::pop,
@@ -94,7 +94,7 @@ fun SubsCategoryPage(
                     },
                     actions = { selectedMode ->
                         if (selectedMode) {
-                            GkMultiSelectionActions(selection, keys, enabled = !busy) { dismiss ->
+                            GkMultiSelectionActions(selectionSnapshot.selectedKeys, keys, selection::selectAll, selection::invert, enabled = !busy) { dismiss ->
                                 GkBatchActionMenuItem(
                                     stringResource(Res.string.category_follow_subscription),
                                     dismiss,
@@ -152,7 +152,7 @@ fun SubsCategoryPage(
             floatingActionButton = {
                 if (subs.isLocal) {
                     GkAnimatedFloatingActionButton(
-                        visible = !selection.active,
+                        visible = !selectionSnapshot.active,
                         onClick = { mainVm.navigator.navigate(CategoryEditorRoute(subs.id)) },
                         imageVector = GkIcons.Add,
                         contentDescription = stringResource(Res.string.category_add),
@@ -167,7 +167,7 @@ fun SubsCategoryPage(
                 items(state.categories, key = { it.category.key }) { summary ->
                     CategoryItemCard(
                         summary = summary,
-                        selectedMode = selection.active,
+                        selectedMode = selectionSnapshot.active,
                         selected = summary.category.key in selected,
                         selectionEnabled = !busy,
                         onLongClick = { selection.select(summary.category.key) },
@@ -210,12 +210,12 @@ private fun CategoryItemCard(
         onLongClick = onLongClick,
         onSelect = onSelect,
         trailing = {
-            GkTooltipIconButtonBox(contentDescription = summary.setting.label) {
+            GkTooltipIconButtonBox(contentDescription = stringResource(summary.setting.labelResource)) {
                 Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
                     GkIcon(
                         imageVector = summary.setting.icon,
                         modifier = Modifier.size(20.dp),
-                        contentDescription = summary.setting.label,
+                        contentDescription = stringResource(summary.setting.labelResource),
                         tint = if (summary.setting == CategorySetting.FollowSubscription)
                             MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.primary,
                     )

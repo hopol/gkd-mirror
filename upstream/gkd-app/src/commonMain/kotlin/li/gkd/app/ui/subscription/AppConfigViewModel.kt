@@ -1,5 +1,7 @@
 package li.gkd.app.ui.subscription
 
+import li.gkd.app.record.TriggerStats
+import li.gkd.app.ui.component.MultiSelectionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -25,9 +27,8 @@ import li.gkd.app.ui.MainViewModel
 import li.gkd.app.subscription.SubscriptionJson.toJson5String
 import li.gkd.app.subscription.SubscriptionRepository
 import li.gkd.app.ui.navigation.AppConfigRoute
-import li.gkd.app.ui.option.RuleSortOption
+import li.gkd.app.rule.RuleSort
 import li.gkd.app.ui.state.BaseViewModel
-import li.gkd.app.ui.text.getSync
 import li.gkd.db.ActionLog
 import li.gkd.db.Db
 import li.gkd.db.RuleGroupType
@@ -41,11 +42,14 @@ data class AppConfigUiState(
     val configs: SubscriptionConfigSnapshot,
     val subsPairs: List<Pair<AppRuleSubscription, List<RawSubscription.RawGroupProps>>>,
     val latestLogs: List<ActionLog>,
+    val triggerStats: TriggerStats,
 )
 
 class AppConfigViewModel(
     val route: AppConfigRoute,
 ) : BaseViewModel() {
+    val selection = MultiSelectionState<RuleGroupTarget>()
+
     val categorySelection: StateFlow<AppRuleCategorySelection>
         field = MutableStateFlow(
             if (route.focusLog == null) AppRuleCategorySelection.Global else AppRuleCategorySelection.FocusedRule
@@ -77,7 +81,7 @@ class AppConfigViewModel(
         batchMutex.tryWithStateLock(action)
     }
 
-    fun setRuleSortType(option: RuleSortOption) {
+    fun setRuleSortType(option: RuleSort) {
         SettingsRepository.updateSettings { it.copy(appRuleSort = option.value) }
     }
 
@@ -90,10 +94,11 @@ class AppConfigViewModel(
             when (source) {
                 Loadable.Loading -> flowOf(Loadable.Loading)
                 is Loadable.Failure -> flowOf(source)
-                is Loadable.Ready -> combine<SubscriptionConfigSnapshot, List<ActionLog>, Loadable<AppConfigUiState>>(
+                is Loadable.Ready -> combine<SubscriptionConfigSnapshot, List<ActionLog>, List<li.gkd.db.RuleTriggerStats>, Loadable<AppConfigUiState>>(
                     SubscriptionConfigStore.observe(),
                     Db.actionLogDao.queryLatestByAppId(route.appId),
-                ) { configs, logs ->
+                    Db.ruleTriggerStatsDao.observe(appId = route.appId),
+                ) { configs, logs, records ->
                     val globalConfigs =
                         configs.globalGroupConfigs.associateBy { it.subsId to it.groupKey }
                     Loadable.Ready(
@@ -119,6 +124,7 @@ class AppConfigViewModel(
                                     ) to groups).takeIf { groups.isNotEmpty() }
                                 },
                             latestLogs = logs,
+                            triggerStats = TriggerStats(records),
                         )
                     )
                 }.catch { emit(Loadable.Failure(it)) }

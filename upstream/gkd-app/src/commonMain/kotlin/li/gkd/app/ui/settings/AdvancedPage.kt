@@ -18,11 +18,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
+import li.gkd.app.ui.component.gkTopAppBarScroll
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -47,6 +44,8 @@ import li.gkd.app.ui.component.autoFocus
 import li.gkd.app.ui.navigation.A11yEventLogRoute
 import li.gkd.app.ui.navigation.ActivityLogRoute
 import li.gkd.app.ui.navigation.CrashReportRoute
+import li.gkd.app.ui.navigation.ExternalCallsRoute
+import li.gkd.app.ui.navigation.QuickSettingsTilesRoute
 import li.gkd.app.ui.navigation.SnapshotPageRoute
 import li.gkd.app.ui.navigation.SnapshotSettingsRoute
 import li.gkd.app.ui.platform.UiHost
@@ -54,7 +53,6 @@ import li.gkd.app.ui.style.TABULAR_NUMBERS_FONT_FEATURE
 import li.gkd.app.ui.style.itemHorizontalPadding
 import li.gkd.app.ui.style.itemVerticalPadding
 import li.gkd.app.ui.style.titleItemPadding
-import li.gkd.app.ui.text.getSync
 import li.gkd.app.util.Constants
 import li.gkd.app.util.ToastUtils
 import org.jetbrains.compose.resources.stringResource
@@ -114,7 +112,7 @@ fun AdvancedPage(
                 imageVector = GkIcons.Edit,
                 onClickLabel = stringResource(Res.string.http_port_edit),
                 onClick = {
-                    vm.setShowEditPortDialog(true)
+                    vm.editPort(store.httpServerPort)
                 },
             )
             GkTextSwitch(
@@ -128,10 +126,12 @@ fun AdvancedPage(
         }
     }
 
+    val portDraft by vm.portDraft.collectAsStateWithLifecycle()
     if (showEditPortDialog) {
         EditHttpPortDialog(
-            currentPort = store.httpServerPort,
-            onDismissRequest = { vm.setShowEditPortDialog(false) },
+            value = portDraft,
+            onValueChange = vm::setPortDraft,
+            onDismissRequest = { vm.closeEditPortDialog() },
             onConfirm = { text ->
                 val oldPort = SettingsRepository.settings.value.httpServerPort
                 if (SettingsRepository.saveHttpServerPort(text)) {
@@ -139,7 +139,7 @@ fun AdvancedPage(
                         host.httpServerPortChanged()
                         ToastUtils.show(Res.string.update_success.getSync())
                     }
-                    vm.setShowEditPortDialog(false)
+                    vm.closeEditPortDialog()
                 } else {
                     ToastUtils.show(Res.string.http_port_input_hint.getSync())
                 }
@@ -149,7 +149,7 @@ fun AdvancedPage(
 
     val scrollBehavior = TopAppBarDefaults.enterAlwaysScrollBehavior()
     GkScaffold(
-        modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+        modifier = Modifier.gkTopAppBarScroll(scrollBehavior),
         topBar = {
             GkTopAppBar(
                 scrollBehavior = scrollBehavior,
@@ -173,7 +173,6 @@ fun AdvancedPage(
             )
             GkSettingItem(
                 title = stringResource(Res.string.snapshot_records),
-                subtitle = stringResource(Res.string.snapshot_records_description),
                 onClick = { mainVm.navigator.navigate(SnapshotPageRoute) },
             )
             GkTextSwitch(
@@ -184,7 +183,6 @@ fun AdvancedPage(
             )
             GkSettingItem(
                 title = stringResource(Res.string.snapshot_settings),
-                subtitle = stringResource(Res.string.snapshot_settings_description),
                 onClick = { mainVm.navigator.navigate(SnapshotSettingsRoute) },
             )
 
@@ -216,21 +214,26 @@ fun AdvancedPage(
                 checked = trackServiceRunning,
                 onCheckedChange = { if (it) vm.setShowTrackNotice(true) else host.setTrackServiceEnabled(false) },
             )
+            GkSettingItem(
+                title = stringResource(Res.string.external_calls_title),
+                onClick = { mainVm.navigator.navigate(ExternalCallsRoute) },
+            )
+            GkSettingItem(
+                title = stringResource(Res.string.quick_settings_tiles_title),
+                onClick = { mainVm.navigator.navigate(QuickSettingsTilesRoute) },
+            )
 
             AdvancedSectionTitle(stringResource(Res.string.advanced_logs_diagnostics))
             GkSettingItem(
-                title = stringResource(Res.string.activity_log_title),
-                subtitle = stringResource(Res.string.activity_switch_logs),
+                title = stringResource(Res.string.activity_switch_logs),
                 onClick = { mainVm.navigator.navigate(ActivityLogRoute) },
             )
             GkSettingItem(
-                title = stringResource(Res.string.event_log_title),
-                subtitle = stringResource(Res.string.a11y_event_logs),
+                title = stringResource(Res.string.a11y_event_logs),
                 onClick = { mainVm.navigator.navigate(A11yEventLogRoute) },
             )
             GkSettingItem(
                 title = stringResource(Res.string.crash_reports),
-                subtitle = stringResource(Res.string.crash_reports_description),
                 onClick = { mainVm.navigator.navigate(CrashReportRoute) },
             )
 
@@ -371,11 +374,11 @@ private fun HttpServiceItem(
 
 @Composable
 private fun EditHttpPortDialog(
-    currentPort: Int,
+    value: String,
+    onValueChange: (String) -> Unit,
     onDismissRequest: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
-    var value by remember { mutableStateOf(currentPort.toString()) }
     GkAlertDialog(
         properties = DialogProperties(dismissOnClickOutside = false),
         title = { Text(text = stringResource(Res.string.http_port)) },
@@ -383,7 +386,7 @@ private fun EditHttpPortDialog(
             OutlinedTextField(
                 value = value,
                 placeholder = { Text(text = stringResource(Res.string.http_port_input_hint)) },
-                onValueChange = { value = it.filter(Char::isDigit).take(5) },
+                onValueChange = onValueChange,
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().autoFocus(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),

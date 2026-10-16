@@ -1,10 +1,11 @@
 package li.gkd.app.ui.subscription
 
+import li.gkd.app.record.TriggerStats
+import li.gkd.app.ui.component.MultiSelectionState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import li.gkd.app.resources.*
-import li.gkd.app.rule.CategoryPolicy
 import li.gkd.app.rule.CategorySetting
 import li.gkd.app.rule.RuleGroupConfigService
 import li.gkd.app.rule.RuleGroupTarget
@@ -16,9 +17,8 @@ import li.gkd.app.state.MutexState
 import li.gkd.app.subscription.RawSubscription
 import li.gkd.app.subscription.SubscriptionRepository
 import li.gkd.app.ui.navigation.SubsCategoryGroupRoute
-import li.gkd.app.ui.option.AppSortOption
+import li.gkd.app.app.AppSort
 import li.gkd.app.ui.state.BaseViewModel
-import li.gkd.app.ui.text.getSync
 import li.gkd.db.Db
 import li.gkd.db.SubsAppGroupConfig
 import li.gkd.db.SubsCategoryConfig
@@ -33,6 +33,7 @@ data class SubsCategoryGroupUiState(
     val categoryConfig: SubsCategoryConfig?,
     val appActionOrder: Map<String, Int>,
     val configs: SubscriptionConfigSnapshot,
+    val triggerStats: TriggerStats,
 ) {
     val targets: Set<RuleGroupTarget.App> = apps.flatMap { app ->
         app.groups.map { RuleGroupTarget.App(subscription.id, app.id, it.key) }
@@ -40,12 +41,14 @@ data class SubsCategoryGroupUiState(
     val overrideTargets: Set<RuleGroupTarget.App> = targets.filterTo(mutableSetOf()) {
         groupConfigs[it]?.enable != null
     }
-    val setting: CategorySetting = CategoryPolicy.setting(categoryConfig)
+    val setting: CategorySetting = CategorySetting.from(categoryConfig)
 }
 
 class SubsCategoryGroupViewModel(
     private val route: SubsCategoryGroupRoute,
 ) : BaseViewModel() {
+    val selection = MultiSelectionState<RuleGroupTarget.App>()
+
     val showActions: StateFlow<Boolean>
         field = MutableStateFlow(false)
 
@@ -68,20 +71,27 @@ class SubsCategoryGroupViewModel(
     }
 
     val uiState = RequiredSubscription(route.subsId, scope).buildUiState { subscription ->
+        val categoryApps = subscription.getCategoryApps(route.categoryKey)
+        val categoryGroupKeys = categoryApps.flatMap { app ->
+            app.groups.map { app.id to it.key }
+        }.toSet()
         combine(
             SubscriptionConfigStore.observe(),
             Db.actionLogDao.queryLatestUniqueAppIds(route.subsId),
-        ) { snapshot, actionAppIds ->
+            Db.ruleTriggerStatsDao.observe(subsId = route.subsId, groupType = li.gkd.db.RuleGroupType.App),
+        ) { snapshot, actionAppIds, records ->
             val disabledAppIds = snapshot.appConfigs.filter {
                 it.subsId == subscription.id && it.enable == false
             }.mapTo(mutableSetOf()) { it.appId }
             SubsCategoryGroupUiState(
                 configs = snapshot,
+                triggerStats = TriggerStats(records.filter { record ->
+                    (record.appId to record.groupKey) in categoryGroupKeys
+                }),
                 subscription = subscription,
                 category = subscription.categories.find { it.key == route.categoryKey }
                     ?: error(Res.string.category_removed_back_notice.getSync()),
-                apps = subscription.getCategoryApps(route.categoryKey)
-                    .filter { it.id !in disabledAppIds },
+                apps = categoryApps.filter { it.id !in disabledAppIds },
                 groupConfigs = snapshot.appGroupConfigs.filter { it.subsId == subscription.id }
                     .associateBy { RuleGroupTarget.App(it.subsId, it.appId, it.groupKey) },
                 categoryConfig = snapshot.categoryConfigs.find {
@@ -92,7 +102,7 @@ class SubsCategoryGroupViewModel(
         }
     }
 
-    fun setSortType(option: AppSortOption) {
+    fun setSortType(option: AppSort) {
         SettingsRepository.updateSettings { it.copy(subsCategorySort = option.value) }
     }
 

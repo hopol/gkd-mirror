@@ -1,5 +1,9 @@
 package li.gkd.app.ui.subscription
 
+import li.gkd.app.ui.component.GkRuleSortButton
+import li.gkd.app.util.SortUtils
+import li.gkd.app.rule.RuleSort
+import li.gkd.app.rule.toRuleGroupTarget
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -8,7 +12,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.nestedscroll.nestedScroll
+import li.gkd.app.ui.component.gkTopAppBarScroll
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import li.gkd.app.resources.*
@@ -29,7 +33,6 @@ import li.gkd.app.ui.component.GkSubscriptionPageContent
 import li.gkd.app.ui.component.GkTwoLineText
 import li.gkd.app.ui.component.animateListItem
 import li.gkd.app.ui.component.rememberListScrollState
-import li.gkd.app.ui.component.rememberMultiSelectionState
 import li.gkd.app.ui.component.rememberRuleControlEnvironment
 import li.gkd.app.ui.component.rememberRuleListFocus
 import li.gkd.app.ui.navigation.SubsGlobalGroupListRoute
@@ -41,6 +44,7 @@ import li.gkd.app.ui.style.scaffoldPadding
 import li.gkd.app.util.ToastUtils
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
+import li.gkd.db.SubscriptionIds
 
 @Composable
 fun SubsGlobalGroupListPage(
@@ -52,24 +56,33 @@ fun SubsGlobalGroupListPage(
 
     val vm = viewModel { SubsGlobalGroupListViewModel(route) }
     val scope = vm.scope
+    val sort by vm.sort.collectAsStateWithLifecycle()
     val environment = rememberRuleControlEnvironment()
     val batchBusy by vm.batchBusyFlow.collectAsStateWithLifecycle()
 
     GkSubscriptionPageContent(vm.uiState, mainVm.navigator::pop) { state ->
         val subs = state.subscription
         val configIndex = remember(state.configs) { RuleConfigIndex(state.configs) }
-        val editable = subsItemId < 0
+        val editable = SubscriptionIds.isLocal(subsItemId)
         val controls = remember(state, environment) {
             subs.globalGroups.associate { group ->
                 group.key to environment.resolve(subs, group, null, state.configs, configIndex)
             }
         }
-        val globalGroups = subs.globalGroups
+        val globalGroups = remember(subs.globalGroups, state.triggerStats, sort) {
+            when (sort) {
+                RuleSort.ByDefault -> subs.globalGroups
+                RuleSort.ByRuleName -> subs.globalGroups.sortedWith { a, b -> SortUtils.collator.compare(a.name, b.name) }
+                RuleSort.ByActionTime -> subs.globalGroups.sortedByDescending { state.triggerStats.group(it.toRuleGroupTarget(subs.id, null)).lastTime ?: 0L }
+                RuleSort.ByTriggerCount -> subs.globalGroups.sortedByDescending { state.triggerStats.group(it.toRuleGroupTarget(subs.id, null)).count }
+            }
+        }
 
-        val selectionState = rememberMultiSelectionState<Int>()
+        val selectionState = vm.selection
+        val selectionSnapshot by selectionState.state.collectAsStateWithLifecycle()
         val selectableKeys = remember(controls) { controls.filterValues { it.canEnable }.keys }
-        val selectedKeys = selectionState.selectedKeys intersect selectableKeys
-        val isSelectedMode = selectionState.active
+        val selectedKeys = selectionSnapshot.selectedKeys intersect selectableKeys
+        val isSelectedMode = selectionSnapshot.active
         LaunchedEffect(selectableKeys) {
             selectionState.retain(selectableKeys)
         }
@@ -119,7 +132,7 @@ fun SubsGlobalGroupListPage(
         )
         pageScrollState.ResetOnChange(globalGroups.isEmpty(), enabled = !focus.pending)
         GkScaffold(
-            modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
+            modifier = Modifier.gkTopAppBarScroll(scrollBehavior),
             topBar = {
                 GkMultiSelectionTopAppBar(
                     selectedMode = isSelectedMode,
@@ -135,10 +148,13 @@ fun SubsGlobalGroupListPage(
                         )
                     },
                     actions = { selectedMode ->
+                        if (!selectedMode) GkRuleSortButton(sort, vm::setSort)
                         if (selectedMode) {
                             GkMultiSelectionActions(
-                                selectionState = selectionState,
+                                selected = selectionSnapshot.selectedKeys,
                                 keys = selectableKeys,
+                                onSelectAll = selectionState::selectAll,
+                                onInvert = selectionState::invert,
                                 enabled = !batchBusy,
                             ) { dismiss ->
                                 GkRuleBatchMenuItems(
@@ -211,6 +227,7 @@ fun SubsGlobalGroupListPage(
                         subs = subs,
                         appId = null,
                         group = group,
+                            triggerSummary = state.triggerStats.group(group.toRuleGroupTarget(subs.id)),
                         highlighted = !isSelectedMode && focus.highlightedKey == group.key,
                         control = controls.getValue(group.key),
                         onOpen = {

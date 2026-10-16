@@ -12,21 +12,20 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import li.gkd.app.network.NetworkClients
-import li.gkd.app.network.isNetworkAvailable
+import li.gkd.app.network.isNetworkRequestAllowed
 import li.gkd.app.settings.SettingsRepository
 import li.gkd.app.state.Loadable
 import li.gkd.app.state.MutexState
 import li.gkd.app.storage.appStorage
 import li.gkd.app.util.LogUtils
 import li.gkd.db.Db
-import li.gkd.db.LOCAL_HTTP_SUBS_ID
-import li.gkd.db.LOCAL_SUBS_ID
+import li.gkd.db.SubscriptionIds
 import li.gkd.db.SubsItem
+import li.gkd.db.SubscriptionConfigStore
 import li.songe.json5.decodeFromJson5String
 
 object SubscriptionRepository {
     val files by lazy { FileSubscriptionFiles(appStorage().subscription) }
-    private val categoryPolicy by lazy { CategoryPolicy() }
 
     private val updateMutex = MutexState()
 
@@ -68,18 +67,18 @@ object SubscriptionRepository {
                         previous = SubscriptionSnapshot(),
                     )
                 }
-                if (items.any { it.id == LOCAL_SUBS_ID }) return@withStateLock
+                if (items.any { it.id == SubscriptionIds.LOCAL }) return@withStateLock
                 val item = SubsItem(
-                    id = LOCAL_SUBS_ID,
+                    id = SubscriptionIds.LOCAL,
                     order = items.minByOrNull { it.order }?.order ?: 0,
                 )
-                if (files.readBytes(LOCAL_SUBS_ID) != null) {
+                if (files.readBytes(SubscriptionIds.LOCAL) != null) {
                     Db.subsItemDao.upsert(item)
                     refreshRawSubscriptions(listOf(item))
                 } else {
                     saveLocked(
                         subscription = RawSubscription(
-                            id = LOCAL_SUBS_ID,
+                            id = SubscriptionIds.LOCAL,
                             name = initialName,
                             version = 0,
                         ),
@@ -103,6 +102,17 @@ object SubscriptionRepository {
             Loadable.Loading -> throw SubscriptionException(SubscriptionFailureReason.SubscriptionNotLoaded)
             is Loadable.Failure -> throw state.cause
             is Loadable.Ready -> state.value
+        }
+    }
+
+    suspend fun captureBackup(): SubscriptionBackupSnapshot = withContext(Dispatchers.IO) {
+        // Initialization needs this same lock; wait for it before acquiring the lock.
+        awaitSnapshot()
+        updateMutex.withStateLock {
+            SubscriptionBackupSnapshot(
+                configuration = SubscriptionConfigStore.capture(),
+                subscriptions = awaitSnapshot().subscriptions.values.toList(),
+            )
         }
     }
 
@@ -145,7 +155,8 @@ object SubscriptionRepository {
     suspend fun requestEnabled(id: Long, enabled: Boolean, confirmed: Boolean = false): Boolean =
         updateMutex.withStateLock {
             val items = Db.subsItemDao.queryAll()
-            val item = items.firstOrNull { it.id == id } ?: return@withStateLock true
+            val item = items.firstOrNull { it.id == id }
+                ?: throw SubscriptionException(SubscriptionFailureReason.SubscriptionMissingId, listOf(id.toString()))
             if (enabled && !confirmed && SettingsRepository.settings.value.subsPowerWarn && !item.isLocal) {
                 val subscriptions = snapshotFlow.value.value?.subscriptions.orEmpty()
                 if (items.any { it.id != id && it.enable && !it.isLocal && subscriptions[it.id]?.hasRule != false }) {
@@ -180,6 +191,11 @@ object SubscriptionRepository {
         action: suspend (RawSubscription) -> T,
     ): T = withSubscriptionSnapshots(listOf(expected)) { action(expected) }
 
+    suspend fun <T> withSubscription(
+        id: Long,
+        action: suspend (RawSubscription) -> T,
+    ): T = updateMutex.withStateLock { action(requireSubscription(id)) }
+
     suspend fun <T> withSubscriptionSnapshots(
         expected: Collection<RawSubscription>,
         action: suspend () -> T,
@@ -203,7 +219,7 @@ object SubscriptionRepository {
         check(current == expected) {
             throw SubscriptionException(SubscriptionFailureReason.SubscriptionPreviewConflict)
         }
-        categoryPolicy.previewEdit(current, categoryKey, name, description)
+        CategoryPolicy.previewEdit(current, categoryKey, name, description)
     }
 
     suspend fun deleteCategory(expected: RawSubscription, categoryKey: Int): Boolean =
@@ -232,9 +248,7 @@ object SubscriptionRepository {
     ): Boolean = withContext(Dispatchers.IO) {
         var changed = false
         updateMutex.withStateLock {
-            val snapshot = requireSnapshot(id)
-            val current = snapshot.subscriptions[id]
-                ?: throw (snapshot.loadErrors[id] ?: SubscriptionException(SubscriptionFailureReason.SubscriptionMissingId, listOf(id.toString())))
+            val current = requireSubscription(id)
             val next = transform(current)
             require(next.id == id) {
                 throw SubscriptionException(SubscriptionFailureReason.SubscriptionIdImmutable, listOf(id.toString(), next.id.toString()))
@@ -334,7 +348,7 @@ object SubscriptionRepository {
                 result = SubscriptionResult.Failure(SubscriptionResult.FailureReason.AlreadyExists)
                 return@tryWithStateLock
             }
-            if (subscription.id < 0) {
+            if (!SubscriptionIds.isRemote(subscription.id)) {
                 result = SubscriptionResult.Failure(
                     reason = SubscriptionResult.FailureReason.InvalidId,
                     detail = subscription.id.toString(),
@@ -396,7 +410,7 @@ object SubscriptionRepository {
             val entries = items.map { item ->
                 UpdateEntry(item, snapshot.subscriptions[item.id])
             }
-            if (entries.any { !it.subsItem.isLocal } && !isNetworkAvailable()) {
+            if (entries.any { !it.subsItem.isLocal } && !isNetworkRequestAllowed()) {
                 result = SubscriptionResult.Failure(
                     SubscriptionResult.FailureReason.NetworkUnavailable
                 )
@@ -459,7 +473,7 @@ object SubscriptionRepository {
         subscription: RawSubscription,
         snapshot: SubscriptionSnapshot,
     ): RawSubscription = if (
-        subscription.id < 0 && snapshot.subscriptions[subscription.id]?.version == subscription.version
+        SubscriptionIds.isLocal(subscription.id) && snapshot.subscriptions[subscription.id]?.version == subscription.version
     ) {
         subscription.copy(
             version = subscription.version + 1,
@@ -486,8 +500,8 @@ object SubscriptionRepository {
                 // Only initialization may create absent built-in files. Existing bytes, including
                 // Android recovery files and user names, always take precedence over defaults.
                 val initialName = when (item.id) {
-                    LOCAL_SUBS_ID -> creationDefaults?.localName
-                    LOCAL_HTTP_SUBS_ID -> creationDefaults?.memoryName
+                    SubscriptionIds.LOCAL -> creationDefaults?.localName
+                    SubscriptionIds.LOCAL_HTTP -> creationDefaults?.memoryName
                     else -> null
                 }
                 if (initialName != null && files.readBytes(item.id) == null) {
@@ -543,11 +557,17 @@ object SubscriptionRepository {
         }
     }
 
+    private fun requireSubscription(id: Long): RawSubscription {
+        val snapshot = requireSnapshot(id)
+        return snapshot.subscriptions[id]
+            ?: throw (snapshot.loadErrors[id] ?: SubscriptionException(SubscriptionFailureReason.SubscriptionMissingId, listOf(id.toString())))
+    }
+
     private suspend fun fetchUpdate(entry: UpdateEntry): RawSubscription? {
         val item = entry.subsItem
         val current = entry.subscription
         val itemUpdateUrl = item.updateUrl ?: return null
-        if (item.id < 0) return null
+        if (!SubscriptionIds.isRemote(item.id)) return null
         val checkUrl = current?.checkUpdateUrl?.let { check ->
             runCatching { URI(itemUpdateUrl).resolve(check).toString() }.getOrNull()
         }

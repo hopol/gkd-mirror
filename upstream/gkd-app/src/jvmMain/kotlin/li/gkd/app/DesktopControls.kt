@@ -8,7 +8,6 @@ import li.gkd.app.resources.*
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-
 import li.gkd.app.permission.AndroidPermissions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -63,12 +62,12 @@ fun DesktopControls(
                 .padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                "控制项只影响开发环境；模拟状态不代表真机状态。",
+                "控制项只影响开发环境；模拟状态不代表真机状态",
                 style = MaterialTheme.typography.bodySmall
             )
             if (saveStatus.error != null) {
                 Text(
-                    "模拟设置保存失败：${saveStatus.error}。当前预览已保留，尚未写入磁盘。",
+                    "模拟设置保存失败：${saveStatus.error}。当前预览已保留，尚未写入磁盘",
                     color = MaterialTheme.colorScheme.error
                 )
                 OutlinedButton(onClick = flushSettings) { Text("重试保存") }
@@ -368,7 +367,7 @@ private fun ServiceSimulationControls(state: DesktopState) {
     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         SimulatedService.entries.forEach { service ->
             FilterChip(selected = selectedService == service, onClick = { selectedService = service },
-                label = { Text(stringResource(service.label())) })
+                label = { Text(stringResource(service.labelResource)) })
         }
     }
     val service = selectedService
@@ -379,7 +378,7 @@ private fun ServiceSimulationControls(state: DesktopState) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         HorizontalDivider()
         Text(stringResource(Res.string.simulation_service_status,
-            stringResource(service.label()), stringResource(current.phase.label())))
+            stringResource(service.labelResource), stringResource(current.phase.labelResource)))
         current.failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             OutlinedButton(onClick = { state.simulatorCommand { controller.setEnabled(service, true) } }) {
@@ -407,11 +406,7 @@ private fun ServiceSimulationControls(state: DesktopState) {
                 ServiceStartResult.entries.forEach { result ->
                     FilterChip(selected = plan.startResult == result,
                         onClick = { state.simulatorCommand { controller.configure(service, plan.copy(startResult = result)) } },
-                        label = { Text(stringResource(when (result) {
-                            ServiceStartResult.Success -> Res.string.simulation_success
-                            ServiceStartResult.Failure -> Res.string.simulation_failed
-                            ServiceStartResult.Manual -> Res.string.simulation_manual
-                        })) })
+                        label = { Text(stringResource(result.labelResource)) })
                 }
             }
             if (service == SimulatedService.Screenshot || service == SimulatedService.Accessibility) {
@@ -420,11 +415,7 @@ private fun ServiceSimulationControls(state: DesktopState) {
                     ServiceAuthorization.entries.forEach { authorization ->
                         FilterChip(selected = plan.authorization == authorization,
                             onClick = { state.simulatorCommand { controller.configure(service, plan.copy(authorization = authorization)) } },
-                            label = { Text(stringResource(when (authorization) {
-                                ServiceAuthorization.Allow -> Res.string.action_agree
-                                ServiceAuthorization.Cancel -> Res.string.action_cancel
-                                ServiceAuthorization.Manual -> Res.string.simulation_authorization_dialog
-                            })) })
+                            label = { Text(stringResource(authorization.labelResource)) })
                     }
                 }
             }
