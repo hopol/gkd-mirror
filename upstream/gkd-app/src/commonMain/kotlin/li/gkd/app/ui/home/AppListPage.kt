@@ -271,7 +271,7 @@ fun appListPage(
                                     )
                                 }
                             }
-                            GkMenuGroupCard(title = stringResource(Res.string.filter_title)) {
+                            GkMenuGroupCard(title = stringResource(Res.string.display_title)) {
                                 GkMenuItemCheckbox(
                                     text = stringResource(Res.string.whitelist_title),
                                     checked = state.showBlocked,
@@ -336,7 +336,7 @@ fun appListPage(
                     GkAppListItem(
                         appInfo = appInfo,
                         icon = { GkAppIcon(appInfo.id, 32.dp) },
-                        name = { GkAppNameText(appInfo = appInfo) },
+                        name = { GkAppNameText(appId = appInfo.id, appInfo = appInfo) },
                         stats = stats,
                         triggerSummary = if (editWhiteListMode) null else state.triggerStats?.app(appInfo.id),
                         editWhiteListMode = editWhiteListMode,

@@ -86,6 +86,7 @@ private fun subsManageContent(
     val subsIdToRaw = state?.subscriptions.orEmpty()
     val batchBusy by vm.batchBusyFlow.collectAsStateWithLifecycle()
 
+    val refreshProgress by SubscriptionRepository.refreshing.collectAsStateWithLifecycle()
     val refreshing by li.gkd.app.subscription.SubscriptionRepository.updating.collectAsStateWithLifecycle()
     val selectionState = vm.selection
     val selectionSnapshot by selectionState.state.collectAsStateWithLifecycle()
@@ -266,8 +267,7 @@ private fun subsManageContent(
                         ToastUtils.show(Res.string.subscription_refresh_wait_compact.getSync())
                     } else {
                         vm.scope.launchUi {
-                            val url = mainVm.subsLinkDialog.request() ?: return@launchUi
-                            SubscriptionRepository.addOrModifyRemote(url).message()?.let { ToastUtils.show(it) }
+                            mainVm.subsLinkDialog.request()
                         }
                     }
                 },
@@ -283,7 +283,7 @@ private fun subsManageContent(
             GkMatchingBanner(store.enableMatch, vm::enableMatching)
             GkPullToRefreshBox(
                 modifier = Modifier.weight(1f),
-                isRefreshing = refreshing,
+                isRefreshing = refreshProgress,
                 onRefresh = refresh,
             ) {
                 LazyColumn(
@@ -301,8 +301,8 @@ private fun subsManageContent(
                     }
                     itemsIndexed(orderSubItems, { _, subItem -> subItem.id }) { index, subItem ->
                         // Keep the initial gesture alive after it enters selection mode.
-                        val canDrag = reorderSession.dragging ||
-                                (!refreshing && !batchBusy && !isSelectedMode && orderSubItems.size > 1)
+                        val canDrag = orderSubItems.size > 1 && (reorderSession.dragging ||
+                                (!refreshing && !batchBusy && !isSelectedMode))
                         ReorderableItem(
                             state = reorderableLazyColumnState,
                             key = subItem.id,

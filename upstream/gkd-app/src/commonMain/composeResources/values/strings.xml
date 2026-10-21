@@ -23,7 +23,7 @@
     <string name="a11y_partial_disable_help">「局部关闭」可在白名单应用内关闭服务，来解决界面异常，游戏掉帧或无障碍检测的问题</string>
     <string name="a11y_partial_disable_touch_warning">切换服务会造成短暂触摸卡顿，请自行测试后再编辑白名单</string>
     <string name="a11y_partially_disabled">无障碍局部关闭</string>
-    <string name="a11y_permission_grant">授予「无障碍权限」</string>
+    <string name="a11y_permission_grant">单次授予「无障碍权限」</string>
     <string name="a11y_permission_ready">无障碍权限已就绪</string>
     <string name="a11y_permission_regrant_description">无障碍关闭后需重新授权</string>
     <string name="a11y_restart_failed">重启无障碍失败</string>
@@ -234,7 +234,9 @@
     <string name="category_follow_subscription_description">使用订阅中的类别默认值，再使用规则组默认值</string>
     <string name="category_groups_empty">此类别暂无规则组</string>
     <string name="category_help">类别说明</string>
-    <string name="category_help_description">类别按应用规则组名称前缀匹配；重叠时归入订阅顺序中的第一个类别。全局规则不参与分类。\n\n类别设置作用于整个类别，保留规则组的单独配置。要重新跟随类别，可在详情中清除单独配置。\n\n跟随订阅：类别默认值 → 规则组默认值。\n使用规则组默认：跳过类别默认值。\n\n类别设置和规则组开关表示配置状态，不代表规则当前正在运行</string>
+    <string name="category_icon_legend">图标说明</string>
+    <string name="category_help_description">类别按应用规则组名称前缀匹配；重叠时归入订阅顺序中的第一个类别。全局规则不参与分类。\n\n类别设置作用于整个类别，保留规则组的单独配置。要重新跟随类别，可在详情中清除单独配置。</string>
+    <string name="category_help_state_note">图标表示类别设置，不代表规则正在运行；规则组的单独配置优先。</string>
     <string name="category_key_exhausted">类别编号已用尽</string>
     <string name="category_match_preview">匹配预览</string>
     <string name="category_membership_changes">新增匹配 %1$s 个规则组 · 移出 %2$s 个规则组</string>
@@ -342,7 +344,7 @@
     <string name="file_not_selected">未选择文件</string>
     <string name="file_saved_to_downloads">已保存 %1$s 到下载</string>
     <string name="file_too_large">文件超过大小限制</string>
-    <string name="filter_title">筛选</string>
+    <string name="display_title">显示</string>
     <string name="format_invalid_detail">非法格式\n%1$s</string>
     <string name="fullscreen_dialog">全局弹窗</string>
     <string name="github_cookie_dialog_title">Github Cookie</string>
@@ -674,7 +676,7 @@
     <string name="search_no_results_filter_hint">暂无搜索结果，或修改筛选</string>
     <string name="search_open">打开搜索</string>
     <string name="secure_settings_permission_description">应用可自行控制开关无障碍</string>
-    <string name="secure_settings_permission_grant">授予「写入安全设置权限」</string>
+    <string name="secure_settings_permission_grant">永久授予「写入安全设置权限」</string>
     <string name="secure_settings_permission_granted">已授予写入安全设置权限</string>
     <string name="secure_settings_permission_required">请先授予「写入安全设置权限」</string>
     <string name="selected">已选中</string>
@@ -897,6 +899,12 @@
     <string name="toast_text_input_hint">请输入提示内容</string>
     <string name="toast_use_system_style">使用系统样式</string>
     <string name="total_prefix">共</string>
+    <string name="advanced_background_running">后台运行</string>
+    <string name="status_overlay_keep_alive">透明悬浮窗保活</string>
+    <string name="status_overlay_enable_title">开启透明悬浮窗保活？</string>
+    <string name="status_overlay_enable_description">开启后，使用透明悬浮窗减少系统对应用后台运行的限制，但可能触发系统“正在其它应用的上层显示内容”通知</string>
+    <string name="status_overlay_disable_title">关闭透明悬浮窗保活？</string>
+    <string name="status_overlay_disable_description">关闭后，应用后台运行可能受到系统限制，影响服务持续运行</string>
     <string name="advanced_snapshot_capture">快照采集</string>
     <string name="advanced_live_debug">实时调试</string>
     <string name="advanced_logs_diagnostics">日志排查</string>
@@ -962,8 +970,8 @@
     <string name="whitelist_text_edit_mode_enter">进入白名单文本编辑模式</string>
     <string name="whitelist_title">白名单</string>
     <string name="window_minimize">缩小窗口</string>
-    <string name="work_mode_basic">基础</string>
-    <string name="work_mode_enhanced">增强</string>
+    <string name="work_mode_basic">手动开启</string>
+    <string name="work_mode_enhanced">自动开启</string>
     <string name="work_mode_open">前往工作模式页面</string>
     <string name="work_mode_title">工作模式</string>
     <string name="partial_disable_intro">在白名单应用内自动关闭无障碍服务</string>
@@ -1090,4 +1098,8 @@
     <string name="quick_settings_tile_match_description">开启或关闭规则匹配</string>
     <string name="quick_settings_tile_activity_description">开启或关闭界面记录服务</string>
     <string name="quick_settings_tile_event_description">开启或关闭无障碍事件记录服务</string>
+    <string name="subscription_adding_download">正在下载订阅…</string>
+    <string name="subscription_adding_parse">正在解析订阅…</string>
+    <string name="subscription_adding_check">正在检查订阅…</string>
+    <string name="subscription_adding_save">正在保存订阅…</string>
 </resources>
