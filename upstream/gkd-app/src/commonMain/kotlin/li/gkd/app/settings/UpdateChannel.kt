@@ -1,6 +1,7 @@
 package li.gkd.app.settings
 
 import li.gkd.app.model.Option
+import li.gkd.app.network.AppLinks
 import li.gkd.app.resources.*
 import org.jetbrains.compose.resources.StringResource
 
@@ -10,8 +11,17 @@ enum class UpdateChannel(
     override val labelResource: StringResource,
     val url: String,
 ) : Option<Int> {
-    Stable(0, Res.string.update_channel_stable, "https://registry.npmmirror.com/@gkd-kit/app/latest/files/index.json"),
-    Beta(1, Res.string.update_channel_beta, "https://registry.npmmirror.com/@gkd-kit/app-beta/latest/files/index.json");
+    Stable(
+        0,
+        Res.string.update_channel_stable,
+        AppLinks.StableUpdate,
+    ),
+    Beta(
+        1,
+        Res.string.update_channel_beta,
+        AppLinks.BetaUpdate,
+    );
 
-    override val options get() = entries
+    override val options
+        get() = entries
 }

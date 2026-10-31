@@ -15,60 +15,59 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
-import li.gkd.app.a11y.A11yCommonImpl
-import li.gkd.app.a11y.A11yRuleEngine
-import li.gkd.app.a11y.A11yRuntime
 import li.gkd.app.appScope
+import li.gkd.app.logging.LogUtils
+import li.gkd.app.matching.AndroidAutomationSession
+import li.gkd.app.matching.AndroidAutomationSessions
+import li.gkd.app.matching.AndroidMatchHost
+import li.gkd.app.matching.MatchingRuntime
+import li.gkd.app.matching.diagnostics.MatchServiceEvent
 import li.gkd.app.record.RuntimeRecordRepository
 import li.gkd.app.resources.*
-import li.gkd.app.store.AppStore.updateEnableAutomator
 import li.gkd.app.settings.AutomatorMode
+import li.gkd.app.store.AppStore.updateEnableAutomator
 import li.gkd.app.util.AndroidTarget
-import li.gkd.app.util.LogUtils
 import li.gkd.app.util.SystemServiceDump
 import li.gkd.app.util.ToastUtils
 import li.gkd.app.util.launchLogged
 
-class AutomationService private constructor(
+class AutomationService
+private constructor(
     private val privilegeContext: PrivilegeContext,
-) : A11yCommonImpl {
-    override val mode get() = AutomatorMode.Automation
+) : AndroidAutomationSession {
+    override val mode
+        get() = AutomatorMode.Automation
+
     private val handlerThread = HandlerThread("UiAutomatorHandlerThread")
     private val uiAutomationDelegate = lazy {
         UiAutomationHidden(
-            handlerThread.looper,
-            ProxyUiAutomationConnection(privilegeContext),
-        ).toPublic
+                handlerThread.looper,
+                ProxyUiAutomationConnection(privilegeContext),
+            )
+            .toPublic
     }
     private val uiAutomation by uiAutomationDelegate
 
     override val scope = MainScope()
 
-    override val ruleEngine by lazy { A11yRuleEngine(this) }
+    override val matchHost by lazy { AndroidMatchHost(this) }
+    override val subscribedEventTypes: Int?
+        get() = uiAutomation.serviceInfo?.eventTypes
 
     private val listener = UiAutomation.OnAccessibilityEventListener {
-        ruleEngine.onA11yEvent(it)
+        matchHost.onA11yEvent(it)
     }
 
-    override suspend fun screenshot(): Bitmap? = withContext(Dispatchers.IO) {
-        try {
-            privilegeContextFlow.value?.screenshot()
-        } catch (e: Throwable) {
-            LogUtils.d("takeScreenshot failed", e)
-            null
+    override suspend fun screenshot(): Bitmap? =
+        withContext(Dispatchers.IO) {
+            privilegeContext.screenshot()
         }
-    }
 
-    override val windowNodeInfo: AccessibilityNodeInfo? get() = uiAutomation.rootInActiveWindow
-    override val windowInfos: List<AccessibilityWindowInfo> get() = uiAutomation.windows
-    private val startTime = System.currentTimeMillis()
-    override var justStarted: Boolean = true
-        get() {
-            if (field) {
-                field = System.currentTimeMillis() - startTime < 3_000
-            }
-            return field
-        }
+    override val windowNodeInfo: AccessibilityNodeInfo?
+        get() = uiAutomation.rootInActiveWindow
+
+    override val windowInfos: List<AccessibilityWindowInfo>
+        get() = uiAutomation.windows
 
     private var connected = false
 
@@ -80,10 +79,11 @@ class AutomationService private constructor(
         connected = true
         ToastUtils.show(Res.string.automation_started.getSync())
         updateEnableAutomator(true)
-        A11yRuntime.onA11yConnected(this)
+        AndroidAutomationSessions.onA11yConnected(this)
     }
 
     private fun disconnect() {
+        MatchingRuntime.coordinator.detach(this)
         scope.cancel()
         handlerThread.quit()
         if (!uiAutomationDelegate.isInitialized()) return
@@ -93,8 +93,10 @@ class AutomationService private constructor(
                 uiAutomation.setOnAccessibilityEventListener(null)
             }
             uiAutomation.toHidden.disconnect()
+            if (wasConnected)
+                AndroidAutomationSessions.recordServiceEvent(this, MatchServiceEvent.Disconnected)
         } catch (e: Exception) {
-            LogUtils.d("disconnect automation failed", e)
+            LogUtils.e("disconnect automation failed", e)
         } finally {
             uiAutomation.quitRemoteCallbackThread()
             connected = false
@@ -111,6 +113,7 @@ class AutomationService private constructor(
 
     private var tempShutdownFlag = false
     private val shutdown = atomic(false)
+
     override fun shutdown(temp: Boolean) {
         if (!shutdown.compareAndSet(expect = false, update = true)) return
         if (temp) {
@@ -156,7 +159,8 @@ class AutomationService private constructor(
                 val privilegeContext = privilegeContextFlow.value ?: return@synchronized
                 try {
                     if (queryPrivilegeCapabilities().restricted) {
-                        if (!silent) ToastUtils.show(Res.string.automation_permission_restricted.getSync())
+                        if (!silent)
+                            ToastUtils.show(Res.string.automation_permission_restricted.getSync())
                         return@synchronized
                     }
                     if (isOtherUiAutomationRunning()) {
@@ -165,7 +169,7 @@ class AutomationService private constructor(
                     }
                 } catch (e: Exception) {
                     ToastUtils.show(Res.string.automation_state_check_failed.getSync(e.message))
-                    LogUtils.d("detect automation state failed", e)
+                    LogUtils.e("detect automation state failed", e)
                     return@synchronized
                 }
                 val instance = AutomationService(privilegeContext)
@@ -177,14 +181,14 @@ class AutomationService private constructor(
                     }
                     if (
                         privilegeContextFlow.value !== privilegeContext ||
-                        !privilegeContext.serverLifecycleBinder.pingBinder()
+                            !privilegeContext.serverLifecycleBinder.pingBinder()
                     ) {
                         instance.shutdown(true)
                     }
                 } catch (e: Exception) {
                     instance.shutdown(true)
                     ToastUtils.show(Res.string.automation_start_failed.getSync(e.message))
-                    LogUtils.d(e)
+                    LogUtils.e(e)
                 }
             }
         }
@@ -216,6 +220,6 @@ private fun UiAutomation.quitRemoteCallbackThread() {
             field.set(this, null)
         }
     } catch (e: Exception) {
-        LogUtils.d("quit UiAutomation callback thread failed", e)
+        LogUtils.e("quit UiAutomation callback thread failed", e)
     }
 }

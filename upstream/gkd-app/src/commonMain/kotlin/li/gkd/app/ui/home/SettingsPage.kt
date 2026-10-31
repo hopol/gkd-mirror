@@ -1,6 +1,5 @@
 package li.gkd.app.ui.home
 
-import li.gkd.app.META
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
@@ -9,35 +8,44 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import li.gkd.app.ui.component.gkTopAppBarScroll
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import li.gkd.app.META
+import li.gkd.app.model.findOption
 import li.gkd.app.notif.formatNotificationTemplate
 import li.gkd.app.resources.*
 import li.gkd.app.rule.ruleGroupState
 import li.gkd.app.settings.SettingsRepository
+import li.gkd.app.state.Loadable
 import li.gkd.app.ui.MainViewModel
 import li.gkd.app.ui.component.GkPageBottomSpace
 import li.gkd.app.ui.component.GkSettingItem
 import li.gkd.app.ui.component.GkTextMenu
 import li.gkd.app.ui.component.GkTextSwitch
 import li.gkd.app.ui.component.GkTopAppBar
+import li.gkd.app.ui.component.gkTopAppBarScroll
 import li.gkd.app.ui.component.rememberColumnScrollState
 import li.gkd.app.ui.navigation.AboutRoute
 import li.gkd.app.ui.navigation.ActionToastRoute
 import li.gkd.app.ui.navigation.AdvancedPageRoute
 import li.gkd.app.ui.navigation.BlockA11yAppListRoute
 import li.gkd.app.ui.navigation.BlockA11ySetupRoute
+import li.gkd.app.ui.navigation.KeepAliveRoute
+import li.gkd.app.ui.navigation.MatchDebugRoute
 import li.gkd.app.ui.navigation.NotificationTextRoute
 import li.gkd.app.ui.option.DarkThemeOption
-import li.gkd.app.model.findOption
 import li.gkd.app.ui.page.BackupDialog
 import li.gkd.app.ui.page.GkBackupDialogs
-import li.gkd.app.ui.platform.UiHost
+import li.gkd.app.ui.platform.LocalUiHost
 import li.gkd.app.ui.platform.dynamicColorAvailable
-import li.gkd.app.ui.platform.privilegeAvailable
 import li.gkd.app.ui.share.launchUi
 import li.gkd.app.ui.style.titleItemPadding
 import org.jetbrains.compose.resources.getString
@@ -45,14 +53,18 @@ import org.jetbrains.compose.resources.stringResource
 
 @Composable
 fun settingsPage(
-    host: UiHost,
     vm: HomeViewModel,
 ): ScaffoldExt {
+    val host = LocalUiHost.current
     val mainVm = MainViewModel.requireCurrent()
     val scope = rememberCoroutineScope()
     val appName = META.appName
     val store by SettingsRepository.settings.collectAsStateWithLifecycle()
-    val privilegeAvailable = privilegeAvailable()
+    var selectedTheme by
+        remember(store.enableDarkTheme) {
+            mutableStateOf(store.enableDarkTheme)
+        }
+    var themeUpdateJob by remember { mutableStateOf<Job?>(null) }
     val backupDialog by vm.backupDialog.collectAsStateWithLifecycle()
     GkBackupDialogs(
         dialog = backupDialog,
@@ -68,7 +80,10 @@ fun settingsPage(
                 !enabled ||
                     mainVm.dialogRequests.confirm(
                         title = getString(Res.string.hide_from_recents),
-                        text = getString(Res.string.hide_from_recents_warning),
+                        text =
+                            getString(Res.string.hide_from_recents_description) +
+                                "\n\n" +
+                                getString(Res.string.hide_from_recents_warning),
                         confirmText = getString(Res.string.action_continue),
                     )
             )
@@ -114,7 +129,23 @@ fun settingsPage(
                 val rules by ruleGroupState.collectAsStateWithLifecycle()
                 val count by SettingsRepository.actionCount.collectAsStateWithLifecycle()
                 val groups = rules.value?.groups
-                val summary = dashboardSummary(rules, count)
+                val summary =
+                    when (val state = rules) {
+                        Loadable.Loading -> null
+                        is Loadable.Failure -> stringResource(Res.string.data_load_failed)
+                        is Loadable.Ready -> {
+                            val ruleSummary =
+                                dashboardSummary(state.value.groups)
+                                    ?: stringResource(Res.string.rules_empty)
+                            if (count > 0)
+                                stringResource(
+                                    Res.string.action_count_summary,
+                                    ruleSummary,
+                                    count.toString(),
+                                )
+                            else ruleSummary
+                        }
+                    }
                 fun format(text: String) =
                     formatNotificationTemplate(
                         text,
@@ -130,7 +161,7 @@ fun settingsPage(
                 GkSettingItem(
                     stringResource(Res.string.notification_text),
                     subtitle =
-                        listOf(title, text)
+                        listOfNotNull(title, text)
                             .map {
                                 it.lineSequence().joinToString(" ").trim()
                             }
@@ -143,9 +174,13 @@ fun settingsPage(
 
                 GkTextSwitch(
                     title = stringResource(Res.string.hide_from_recents),
-                    subtitle = stringResource(Res.string.hide_from_recents_description),
                     checked = store.excludeFromRecents,
                     onCheckedChange = ::setExcludeFromRecents,
+                )
+
+                GkSettingItem(
+                    title = stringResource(Res.string.keep_alive_strategy),
+                    onClick = { mainVm.navigator.navigate(KeepAliveRoute) },
                 )
 
                 AnimatedVisibility(visible = store.enableBlockA11yAppList) {
@@ -158,13 +193,7 @@ fun settingsPage(
                 }
                 GkTextSwitch(
                     title = stringResource(Res.string.service_partial_disable),
-                    subtitle =
-                        if (store.enableBlockA11yAppList && !privilegeAvailable)
-                            stringResource(Res.string.privilege_service_disconnected)
-                        else stringResource(Res.string.service_partial_disable_description),
                     checked = store.enableBlockA11yAppList,
-                    onClick = { mainVm.navigator.navigate(BlockA11ySetupRoute) },
-                    onClickLabel = stringResource(Res.string.partial_disable_setup_open),
                     onCheckedChange = {
                         if (it) {
                             mainVm.navigator.navigate(BlockA11ySetupRoute)
@@ -192,9 +221,18 @@ fun settingsPage(
 
                 GkTextMenu(
                     title = stringResource(Res.string.theme_mode),
-                    option = DarkThemeOption.objects.findOption(store.enableDarkTheme),
-                    onOptionChange = {
-                        SettingsRepository.updateSettings { store -> store.copy(enableDarkTheme = it.value) }
+                    option = DarkThemeOption.objects.findOption(selectedTheme),
+                    onOptionChange = { option ->
+                        selectedTheme = option.value
+                        themeUpdateJob?.cancel()
+                        themeUpdateJob =
+                            mainVm.scope.launch {
+                                // Let the menu close before changing the application's colors.
+                                delay(300)
+                                SettingsRepository.updateSettings {
+                                    it.copy(enableDarkTheme = option.value)
+                                }
+                            }
                     },
                 )
 
@@ -203,7 +241,9 @@ fun settingsPage(
                         title = stringResource(Res.string.dynamic_colors),
                         checked = store.enableDynamicColor,
                         onCheckedChange = {
-                            SettingsRepository.updateSettings { store -> store.copy(enableDynamicColor = it) }
+                            SettingsRepository.updateSettings { store ->
+                                store.copy(enableDynamicColor = it)
+                            }
                         },
                     )
                 }
@@ -216,18 +256,21 @@ fun settingsPage(
                 )
 
                 GkSettingItem(
+                    title = stringResource(Res.string.backup_restore),
+                    onClick = {
+                        vm.setBackupDialog(BackupDialog.Main)
+                    },
+                )
+                GkSettingItem(
                     title = stringResource(Res.string.advanced_settings),
                     onClick = {
                         mainVm.navigator.navigate(AdvancedPageRoute)
                     },
                 )
                 GkSettingItem(
-                    title = stringResource(Res.string.backup_restore),
-                    onClick = {
-                        vm.setBackupDialog(BackupDialog.Main)
-                    },
+                    title = stringResource(Res.string.advanced_logs_diagnostics),
+                    onClick = { mainVm.navigator.navigate(MatchDebugRoute) },
                 )
-
                 GkSettingItem(
                     title = stringResource(Res.string.about_title),
                     onClick = {
