@@ -48,6 +48,7 @@ import li.gkd.app.matching.input.isUseful
 import li.gkd.app.matching.input.lastTriggerTime
 import li.gkd.app.matching.input.launcherAppId
 import li.gkd.app.matching.input.toA11yEvent
+import li.gkd.app.matching.input.topTaskAppId
 import li.gkd.app.matching.input.updateTopActivity
 import li.gkd.app.matching.query.A11yQueryContext
 import li.gkd.app.matching.query.MatchNodeReadUnavailable
@@ -63,7 +64,6 @@ import li.gkd.app.record.addActionLog
 import li.gkd.app.rule.*
 import li.gkd.app.rule.ResolvedRule
 import li.gkd.app.service.EventService
-import li.gkd.app.service.topAppIdFlow
 import li.gkd.app.settings.SettingsRepository
 import li.gkd.app.snapshot.captureScreenshotOnEvent
 import li.gkd.app.subscription.refreshSubscriptionsOnLauncher
@@ -159,7 +159,7 @@ class AndroidMatchHost(private val service: AndroidAutomationSession) {
         if (
             SettingsRepository.settings.value.enableBlockA11yAppList &&
                 !SettingsRepository.actualBlockA11yAppList.contains(
-                    topAppIdFlow.value,
+                    topTaskAppId,
                 )
         ) {
             startQueryJob(byForced = true)
@@ -174,11 +174,12 @@ class AndroidMatchHost(private val service: AndroidAutomationSession) {
         startQueryJob()
     }
 
-    val safeActiveWindow: AccessibilityNodeInfo?
-        get() =
-            readA11yWindow(coordinator.diagnostics, "ActiveWindow") {
-                service.windowNodeInfo?.setGeneratedTime()
-            }
+    fun readActiveWindow(
+        onUnavailable: ((RuntimeException?) -> Unit)? = null,
+    ): AccessibilityNodeInfo? =
+        readA11yWindow(coordinator.diagnostics, "ActiveWindow", onUnavailable) {
+            service.windowNodeInfo?.setGeneratedTime()
+        }
 
     private val scope
         get() = service.scope
@@ -568,7 +569,16 @@ class AndroidMatchHost(private val service: AndroidAutomationSession) {
                         coordinator.diagnostics.entry("root_read", "root_read_started")
                         val node =
                             try {
-                                readNode("Root", page) { safeActiveWindow }
+                                if (!coordinator.diagnostics.enabled) {
+                                    readNode("Root", page) { readActiveWindow() }
+                                } else {
+                                    // Keep nested diagnostic publication outside the timed worker.
+                                    readA11yWindow(coordinator.diagnostics, "ActiveWindow") {
+                                        readNode("Root", page) {
+                                            service.windowNodeInfo?.setGeneratedTime()
+                                        }
+                                    }
+                                }
                             } catch (error: MatchNodeReadUnavailable) {
                                 coordinator.diagnostics.entry("Root", checkNotNull(error.message))
                                 return@launch
