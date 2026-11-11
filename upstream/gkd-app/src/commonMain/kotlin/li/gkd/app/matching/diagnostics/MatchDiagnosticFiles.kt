@@ -11,11 +11,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.*
 import li.gkd.app.app.applicationScope
 import li.gkd.app.logging.LogUtils
 import li.gkd.app.storage.appStorage
-import li.gkd.app.util.JsonUtils
 import li.gkd.db.Db
 import li.gkd.db.MatchDiagnosticRecord
 
@@ -33,7 +32,33 @@ class MatchDiagnosticFileStore(private val directory: File) {
         val target = captureDirectory.resolve("diagnostic.json")
         val temporary = Files.createTempFile(captureDirectory.toPath(), "capture-", ".tmp")
         try {
-            temporary.toFile().writeText(JsonUtils.keepingNulls.encodeToString(capture))
+            val archive = prepareDiagnosticArchive(capture)
+            val sections =
+                linkedMapOf(
+                    "accessibilitySettings" to "accessibility-settings.jsonl",
+                    "events" to "events.jsonl",
+                    "keyEvents" to "key-events.jsonl",
+                    "boundaryEvents" to "boundary-events.jsonl",
+                    "querySummaries" to "query-summaries.jsonl",
+                    "queryDetails" to "query-details.jsonl",
+                    "queryPlans" to "query-plans.json",
+                    "systemRecording" to "system-recording.json",
+                )
+            for ((key, name) in sections) {
+                val value = archive.getValue(key)
+                val file = captureDirectory.resolve(name)
+                if (name.endsWith(".jsonl")) {
+                    file.bufferedWriter().use { writer ->
+                        value.jsonArray.forEach { writer.appendLine(it.toString()) }
+                    }
+                } else file.writeText(value.toString())
+            }
+            val metadata =
+                JsonObject(
+                    archive.filterKeys { it !in sections } +
+                        ("files" to JsonObject(sections.mapValues { JsonPrimitive(it.value) })),
+                )
+            temporary.toFile().writeText(metadata.toString())
             Files.move(temporary, target.toPath(), StandardCopyOption.REPLACE_EXISTING)
         } finally {
             Files.deleteIfExists(temporary)
@@ -63,6 +88,8 @@ class MatchDiagnosticFileStore(private val directory: File) {
 
 data class MatchDiagnosticSaveState(
     val id: String,
+    val startedAt: Long,
+    val trackingComplete: Boolean,
     val saved: Boolean = false,
     val error: String? = null,
 )
@@ -98,7 +125,13 @@ object MatchDiagnosticFiles {
     fun enqueue(capture: MatchDiagnosticCapture) {
         synchronized(lock) {
             pending[capture.session.id] = capture
-            updateState(MatchDiagnosticSaveState(capture.session.id))
+            updateState(
+                MatchDiagnosticSaveState(
+                    capture.session.id,
+                    capture.session.startedAt,
+                    capture.session.trackingComplete,
+                ),
+            )
         }
         writer.start()
         saveRequests.trySend(Unit)
@@ -110,6 +143,9 @@ object MatchDiagnosticFiles {
         records.forEach { record ->
             store.delete(record.id)
             Db.matchDiagnosticRecordDao.delete(record.id)
+            synchronized(lock) {
+                state.value = state.value.filterValues { it.startedAt != record.id }
+            }
         }
     }
 
@@ -120,29 +156,28 @@ object MatchDiagnosticFiles {
             writing.withLock {
                 while (true) {
                     val capture = synchronized(lock) { pending.values.firstOrNull() } ?: break
-                    try {
-                        store.save(capture)?.let { Db.matchDiagnosticRecordDao.upsert(it) }
-                    } catch (error: Exception) {
-                        synchronized(lock) {
-                            updateState(
-                                MatchDiagnosticSaveState(
-                                    capture.session.id,
-                                    error = error.toString(),
-                                ),
-                            )
+                    val saving =
+                        MatchDiagnosticSaveState(
+                            capture.session.id,
+                            capture.session.startedAt,
+                            capture.session.trackingComplete,
+                        )
+                    synchronized(lock) { updateState(saving) }
+                    val record =
+                        try {
+                            store.save(capture)?.also { Db.matchDiagnosticRecordDao.upsert(it) }
+                        } catch (error: Exception) {
+                            synchronized(lock) {
+                                updateState(saving.copy(error = error.toString()))
+                            }
+                            throw error
                         }
-                        throw error
-                    }
                     synchronized(lock) {
                         // A late completion may replace this session while its file is written.
                         if (pending[capture.session.id] === capture)
                             pending.remove(capture.session.id)
-                        updateState(
-                            MatchDiagnosticSaveState(
-                                capture.session.id,
-                                saved = capture.session.id !in pending,
-                            ),
-                        )
+                        if (record == null) state.value = state.value - capture.session.id
+                        else updateState(saving.copy(saved = capture.session.id !in pending))
                     }
                 }
                 block()

@@ -174,7 +174,7 @@ class MatchDiagnostics(
     private var operationStatistics = MatchOperationStatisticsRecorder()
     private val nodeSnapshotTimes = mutableMapOf<MatchNodeReadFailure, Long>()
     private var origin = 0L
-    private var capacity = 2000
+    private var capacity = 20_000
     private var snapshotSequence = 0L
     private var lastRules: ForegroundRuleSnapshot? = null
     private var definitionSequence = 0L
@@ -193,8 +193,35 @@ class MatchDiagnostics(
         val operationStatistics: MatchOperationStatisticsRecorder,
     )
 
+    private var accessibilitySettings = emptyList<AccessibilitySettingRecord>()
+    private var droppedAccessibilitySettings = 0L
+
+    fun finishAccessibilitySettings(
+        id: String,
+        records: List<AccessibilitySettingRecord>,
+        dropped: Long,
+    ) =
+        synchronized(lock) {
+            val previous = stoppedSessions[id]
+            if (previous != null) {
+                previous.capture =
+                    previous.capture.copy(
+                        accessibilitySettings = records,
+                        droppedAccessibilitySettings = dropped,
+                    )
+            } else {
+                requireSession(id)
+                accessibilitySettings = records
+                droppedAccessibilitySettings = dropped
+            }
+            if (!session(id).active) onStoppedCapture(export(id))
+        }
+
     private val stoppedSessions = linkedMapOf<String, StoppedSession>()
     private var droppedQueryRecordings = 0L
+    private var droppedQuerySummaries = 0L
+    private var querySequence = 0L
+    private var followingFaultQueries = 0
     private var initialRules: List<MatchRuleIndex>? = null
     private val runs = linkedMapOf<String, MatchDebugRunState>()
     private var runtime: MatchDebugSnapshot? = null
@@ -211,7 +238,7 @@ class MatchDiagnostics(
         policy: MatchTimingPolicy,
         detailed: Boolean = false,
         ruleFilter: String? = null,
-        capacity: Int = 2000,
+        capacity: Int = 20_000,
         recordQueries: Boolean = false,
         recordSystem: Boolean = false,
         initialRules: List<MatchRuleIndex>? = null,
@@ -245,6 +272,8 @@ class MatchDiagnostics(
             events.clear()
             keyEvents.clear()
             boundaryEvents.clear()
+            accessibilitySettings = emptyList()
+            droppedAccessibilitySettings = 0
             droppedBoundaryEvents = 0
             droppedKeyEvents = 0
             ruleSnapshots.clear()
@@ -256,6 +285,9 @@ class MatchDiagnostics(
             entries.clear()
             queryRecordings.clear()
             droppedQueryRecordings = 0
+            droppedQuerySummaries = 0
+            querySequence = 0
+            followingFaultQueries = 0
             this.initialRules = initialRules
             runs.clear()
             runtime = null
@@ -283,31 +315,59 @@ class MatchDiagnostics(
 
     fun shouldRecordQuery(id: String): Boolean =
         synchronized(lock) {
-            if (!enabled || state.value?.id != id || state.value?.recordQueries != true)
-                return@synchronized false
-            if (state.value?.recordSystem == true || queryRecordings.size < 8) true
-            else {
-                droppedQueryRecordings++
-                false
-            }
+            enabled && state.value?.id == id && state.value?.recordQueries == true
         }
 
     fun registerQuery(id: String, evidence: MatchQueryEvidence) =
         synchronized(lock) {
             if (state.value?.id != id || state.value?.recordQueries != true) return@synchronized
-            if (state.value?.recordSystem == true) {
-                if (queryRecordings.size == 32) {
-                    queryRecordings.removeAt(0)
-                    droppedQueryRecordings++
-                }
-                queryRecordings.add(evidence)
-            } else if (queryRecordings.size < 8) queryRecordings.add(evidence)
-            else droppedQueryRecordings++
+            evidence.identify(++querySequence)
+            if (followingFaultQueries > 0) {
+                evidence.protect("after_fault")
+                followingFaultQueries--
+            }
+            if (queryRecordings.size == 2_000) {
+                if (queryRecordings.removeAt(0).detailsRetained) droppedQueryRecordings++
+                droppedQuerySummaries++
+            }
+            queryRecordings.add(evidence)
+            trimQueryDetails()
         }
 
-    fun finishQuery(id: String) =
+    private fun protectQueryContext(reason: String, query: MatchQueryEvidence? = null) {
+        val index = if (query == null) queryRecordings.lastIndex else queryRecordings.indexOf(query)
+        if (index >= 0) {
+            queryRecordings
+                .subList(maxOf(0, index - 2), minOf(queryRecordings.size, index + 3))
+                .filter { it.detailsRetained }
+                .forEach { it.protect(reason) }
+        }
+        followingFaultQueries = maxOf(0, 2 - (queryRecordings.lastIndex - index))
+    }
+
+    private fun trimQueryDetails() {
+        val protected = queryRecordings.filter { it.retainedFor != null }
+        protected.dropLast(16).forEach { it.protect(null) }
+        val recent =
+            queryRecordings.takeLast(if (state.value?.recordSystem == true) 32 else 8).toSet()
+        queryRecordings.forEach {
+            if (it !in recent && it.retainedFor == null && it.releaseDetails())
+                droppedQueryRecordings++
+        }
+    }
+
+    fun finishQuery(id: String, evidence: MatchQueryEvidence) =
         synchronized(lock) {
             if (state.value?.id == id) {
+                evidence.snapshot(includeDetails = false).let {
+                    if (it.outcome == "failed" || (it.durationNanos ?: 0) >= 500_000_000L) {
+                        protectQueryContext(
+                            if (it.outcome == "failed") "query_failed" else "slow_query",
+                            evidence,
+                        )
+                    }
+                }
+                trimQueryDetails()
                 if (!enabled) onStoppedCapture(export(id))
             } else if (id in stoppedSessions) {
                 onStoppedCapture(export(id))
@@ -617,6 +677,18 @@ class MatchDiagnostics(
                                 )
                                     1
                                 else 0,
+                        boundaryEvents =
+                            if (event.isBoundaryTrace())
+                                (capture.boundaryEvents + event).takeLast(previous.capacity)
+                            else capture.boundaryEvents,
+                        droppedBoundaryEvents =
+                            capture.droppedBoundaryEvents +
+                                if (
+                                    event.isBoundaryTrace() &&
+                                        capture.boundaryEvents.size == previous.capacity
+                                )
+                                    1
+                                else 0,
                     )
             } else {
                 if (events.size == capacity) {
@@ -771,7 +843,8 @@ class MatchDiagnostics(
     }
 
     private fun retainKeyEvent(event: MatchTrace) {
-        if (event.serviceConnection != null || event.pageObservation != null) {
+        if (event.isQueryFault()) protectQueryContext(event.reason)
+        if (event.isBoundaryTrace()) {
             if (boundaryEvents.size == capacity) {
                 boundaryEvents.removeFirst()
                 droppedBoundaryEvents++
@@ -825,6 +898,7 @@ class MatchDiagnostics(
                     entries.map { (key, count) -> MatchEntrySummary(key.first, key.second, count) },
                     queryRecordings = queryRecordings.map { it.snapshot() },
                     droppedQueryRecordings = droppedQueryRecordings,
+                    droppedQuerySummaries = droppedQuerySummaries,
                     systemRecording = system,
                     initialRules = initialRules,
                     ruleDefinitions = ruleDefinitions.toMap(),
@@ -839,6 +913,8 @@ class MatchDiagnostics(
                     droppedKeyEvents = droppedKeyEvents,
                     boundaryEvents = boundaryEvents.toList(),
                     droppedBoundaryEvents = droppedBoundaryEvents,
+                    accessibilitySettings = accessibilitySettings,
+                    droppedAccessibilitySettings = droppedAccessibilitySettings,
                 ),
             )
         }
